@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "app/api/extract-bank/route.js": {
+      "maxDuration": 300
+    }
+  }
+}

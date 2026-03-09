@@ -1,0 +1,43 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  background: #f0f4f8;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="file"] {
+  pointer-events: all !important;
+  cursor: text !important;
+  color: #111111 !important;
+  background: white !important;
+  border: 2px solid #aaaaaa !important;
+  border-radius: 6px !important;
+  padding: 10px !important;
+  font-size: 15px !important;
+  width: 100% !important;
+}
+
+label {
+  color: #111111 !important;
+  font-weight: bold !important;
+  font-size: 15px !important;
+}
+
+button {
+  pointer-events: all !important;
+  cursor: pointer !important;
+}
+
+p {
+  color: #333333 !important;
+}
+
+h1 {
+  color: #1a3c6e !important;
+}
