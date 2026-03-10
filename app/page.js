@@ -388,23 +388,6 @@ function BankTrackerTool({ onBack }) {
         </div>
       </div>
 
-      {/* What to upload — yellow warning box */}
-      <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '10px', padding: '16px', marginBottom: '24px' }}>
-        <p style={{ fontWeight: '700', color: '#92400e', fontSize: '13px', margin: '0 0 8px' }}>⚠️ What files to upload?</p>
-        <p style={{ color: '#78350f', fontSize: '12px', margin: '0 0 10px', lineHeight: '1.6' }}>
-          Upload the <strong>Excel files produced by Step 5B</strong>. Each file must have an <strong>"All Transactions"</strong> sheet with these columns:
-        </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-          {['Month', 'Year', 'Bank Name', 'Account Number', 'Account Holder'].map(col => (
-            <span key={col} style={{ background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: '4px', padding: '2px 8px', fontSize: '11px', color: '#92400e', fontWeight: '600' }}>{col}</span>
-          ))}
-        </div>
-        <p style={{ color: '#78350f', fontSize: '11px', margin: '0', lineHeight: '1.6' }}>
-          💡 <strong>One Excel per bank statement PDF is fine</strong> — the tracker merges all accounts automatically.<br />
-          💡 <strong>Multiple accounts in one file?</strong> Also fine — AI detects and groups them by account number + bank.
-        </p>
-      </div>
-
       {/* Upload area */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>

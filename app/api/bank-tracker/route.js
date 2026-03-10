@@ -3,117 +3,173 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ─── STEP 1: Read raw rows from uploaded Excel using ExcelJS ───────────────
+// ─── STEP 1: Read raw rows from uploaded Excel ─────────────────────────────
+// Auto-detects header row (handles title rows like "Combined Transactions")
 async function readExcelRows(arrayBuffer) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(arrayBuffer);
 
-  // Try 'All Transactions' sheet first, fallback to first sheet
   let sheet = wb.getWorksheet('All Transactions');
   if (!sheet) sheet = wb.worksheets[0];
   if (!sheet) throw new Error('No worksheet found in Excel file');
 
-  const rawRows = [];
-  let headerRow = null;
+  // ── Auto-detect header row (scan first 5 rows) ──
+  const KNOWN_HEADERS = ['MONTH', 'YEAR', 'BANK NAME', 'BANK', 'ACCOUNT NUMBER',
+    'ACCOUNT NO', 'ACCOUNT HOLDER', 'DATE', 'DESCRIPTION', 'DEBIT', 'CREDIT'];
+
+  let headerRowNumber = null;
+  let headerMap = null;
+  let bestScore = 0;
 
   sheet.eachRow((row, rowNumber) => {
-    if (rowNumber === 1) {
-      // Capture header for dynamic column mapping
-      headerRow = {};
-      row.eachCell((cell, colNumber) => {
-        const val = cell.value?.toString().trim().toUpperCase();
-        if (val) headerRow[val] = colNumber;
-      });
-      return;
-    }
-
-    if (!headerRow) return;
-
-    // Dynamic column lookup — handles any column order
-    const get = (keys) => {
-      for (const key of keys) {
-        const col = headerRow[key];
-        if (col) {
-          const val = row.getCell(col).value;
-          if (val !== null && val !== undefined && val !== '') return val?.toString().trim();
-        }
+    if (rowNumber > 5) return;
+    let score = 0;
+    const candidate = {};
+    row.eachCell((cell, colNumber) => {
+      const val = cell.value?.toString().trim().toUpperCase();
+      if (val && KNOWN_HEADERS.includes(val)) {
+        score++;
+        candidate[val] = colNumber;
       }
-      return null;
-    };
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      headerRowNumber = rowNumber;
+      headerMap = candidate;
+    }
+  });
 
-    const month    = get(['MONTH']);
-    const year     = get(['YEAR']);
-    const bank     = get(['BANK NAME', 'BANK']);
-    const account  = get(['ACCOUNT NUMBER', 'ACCOUNT NO', 'ACCOUNT#']);
-    const holder   = get(['ACCOUNT HOLDER', 'HOLDER', 'ACCOUNT HOLDER NAME']);
+  if (!headerMap || bestScore === 0) {
+    throw new Error('Could not find header row. Make sure the Excel has columns like Month, Year, Bank Name, Account Number, Account Holder.');
+  }
 
-    // Skip completely empty rows
+  console.log(`Header found at row ${headerRowNumber} with score ${bestScore}:`, Object.keys(headerMap));
+
+  // ── Read data rows ──
+  const rawRows = [];
+
+  const get = (row, keys) => {
+    for (const key of keys) {
+      const col = headerMap[key];
+      if (col) {
+        const val = row.getCell(col).value;
+        if (val !== null && val !== undefined && val !== '') return val?.toString().trim();
+      }
+    }
+    return null;
+  };
+
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber <= headerRowNumber) return;
+
+    const month   = get(row, ['MONTH']);
+    const year    = get(row, ['YEAR']);
+    const bank    = get(row, ['BANK NAME', 'BANK']);
+    const account = get(row, ['ACCOUNT NUMBER', 'ACCOUNT NO', 'ACCOUNT#']);
+    const holder  = get(row, ['ACCOUNT HOLDER', 'HOLDER', 'ACCOUNT HOLDER NAME']);
+
     if (!month && !bank && !account) return;
 
     rawRows.push({ month, year, bank, account, holder });
   });
 
+  console.log(`readExcelRows: headerRow=${headerRowNumber}, dataRows=${rawRows.length}`);
   return rawRows;
 }
 
-// ─── STEP 2: Send raw rows to Claude Haiku for normalization ───────────────
-async function normalizeWithAI(rawRows, fileName) {
-  try {
-    // Deduplicate before sending to AI — no point sending 500 identical rows
-    const seen = new Set();
-    const uniqueRows = rawRows.filter(r => {
-      const key = `${r.account}|${r.bank}|${r.month}|${r.year}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+// ─── STEP 2A: Group raw rows by account locally ────────────────────────────
+function groupRowsByAccount(rawRows) {
+  const groups = {};
 
-    const prompt = `You are given raw transaction data extracted from a bank statement Excel file.
-Analyze the rows and return ONLY valid JSON, nothing else. No markdown, no explanation.
+  for (const r of rawRows) {
+    if (!r.account && !r.bank) continue;
+    const acctKey = `${r.account || 'Unknown'}|${r.bank || 'Unknown'}`;
 
-Return this structure:
-{
-  "accountNumber": "masked as ****1234 (last 4 digits), or full if not maskable",
-  "accountHolder": "Full Name of account holder",
-  "bankName": "Clean normalized bank name (e.g. 'CHASE BANK NA' → 'Chase Bank', 'JPMORGAN' → 'JPMorgan Chase')",
-  "months": ["Jan 2024", "Feb 2024"]
+    if (!groups[acctKey]) {
+      groups[acctKey] = {
+        account: r.account || 'Unknown',
+        bank: r.bank || 'Unknown',
+        holder: r.holder || 'Unknown',
+        monthSet: new Set(),
+      };
+    }
+
+    if (r.holder && groups[acctKey].holder === 'Unknown') {
+      groups[acctKey].holder = r.holder;
+    }
+
+    if (r.month && r.year) {
+      groups[acctKey].monthSet.add(`${r.month} ${r.year}`);
+    } else if (r.month) {
+      groups[acctKey].monthSet.add(r.month);
+    }
+  }
+
+  return Object.values(groups).map(g => ({
+    rawAccount: g.account,
+    rawBank: g.bank,
+    holder: g.holder,
+    months: Array.from(g.monthSet),
+  }));
 }
 
-Rules:
-- Normalize bank names to clean readable form
-- Combine month + year fields into "MMM YYYY" format (e.g. month="Jan", year="2024" → "Jan 2024")
-- If month already contains year (e.g. "January 2024"), convert to "Jan 2024"
-- Account number: mask all but last 4 digits as ****XXXX
-- Deduplicate months — no repeats
-- If any field is missing or unclear, use "Unknown"
-- Return ONE JSON object representing the account in this file
+// ─── STEP 2B: Claude Haiku normalizes the grouped accounts ─────────────────
+// Returns array of normalized account objects
+async function normalizeWithAI(rawRows, fileName) {
+  try {
+    const accountGroups = groupRowsByAccount(rawRows);
+    console.log(`groupRowsByAccount: ${accountGroups.length} distinct account groups in ${fileName}`);
 
-Raw data (${uniqueRows.length} unique rows):
-${JSON.stringify(uniqueRows, null, 0)}`;
+    if (accountGroups.length === 0) return [];
+
+    const prompt = `You are given a list of bank accounts extracted from an Excel file.
+Each entry has a raw account number, raw bank name, account holder, and months.
+Return ONLY a valid JSON array, nothing else. No markdown, no explanation.
+
+Return format:
+[
+  {
+    "accountNumber": "****3000",
+    "accountHolder": "2034 Superior LLC",
+    "bankName": "Countryside Bank",
+    "months": ["Jan 2018", "Feb 2018"]
+  }
+]
+
+Rules:
+- Normalize bank names to their most complete clean form:
+  e.g. "JPMorgan Chase Bank" / "Chase Bank" / "CHASE" → "Chase Bank"
+  e.g. "Hinsdale Bank & Trust Company" / "Hinsdale Bank & Trust" / "Hinsdale Bank" → "Hinsdale Bank & Trust"
+- MERGE accounts with the same last-4-digit account number AND same normalized bank — combine their months
+- Account number: show only last 4 digits with **** prefix e.g. "****3000". If it is already short (4 digits or fewer), just add **** prefix
+- Months are already in "MMM YYYY" format — keep as-is, just deduplicate
+- Account holder: Title Case
+- If any field is missing use "Unknown"
+
+Raw account groups (${accountGroups.length} groups):
+${JSON.stringify(accountGroups)}`;
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1000,
-      messages: [
-        {
-          role: 'user',
-          content: [{ type: 'text', text: prompt }],
-        },
-      ],
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
     });
 
     const text = response.content[0].text.trim();
     const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
+    const parsed = JSON.parse(clean);
+    return Array.isArray(parsed) ? parsed : [parsed];
 
   } catch (err) {
     console.log('AI normalization failed for', fileName, ':', err.message);
-    return {
-      accountNumber: 'Unknown',
-      accountHolder: 'Unknown',
-      bankName: 'Unknown',
-      months: [],
-    };
+    // Fallback: return raw groups without AI normalization
+    const groups = groupRowsByAccount(rawRows);
+    return groups.map(g => ({
+      accountNumber: g.rawAccount ? `****${String(g.rawAccount).slice(-4)}` : 'Unknown',
+      accountHolder: g.holder || 'Unknown',
+      bankName: g.rawBank || 'Unknown',
+      months: g.months,
+    }));
   }
 }
 
@@ -151,25 +207,29 @@ export async function POST(request) {
             return;
           }
 
-          console.log('Sending to AI for normalization:', file.name, '| rows:', rawRows.length);
-          const info = await normalizeWithAI(rawRows, file.name);
+          console.log('Normalizing with AI:', file.name, '| rows:', rawRows.length);
+          const accounts = await normalizeWithAI(rawRows, file.name);
 
-          console.log('Normalized:', info.accountNumber, '|', info.bankName, '| Months:', info.months.length);
+          console.log('Accounts from', file.name, ':', accounts.length);
 
-          const key = `${info.accountNumber}__${info.bankName}`;
+          // accounts is now an ARRAY — loop through each account
+          for (const info of accounts) {
+            const key = `${info.accountNumber}__${info.bankName}`;
 
-          // Thread-safe-ish update (JS is single-threaded, so this is fine)
-          if (!accountMap[key]) {
-            accountMap[key] = {
-              account: info.accountNumber,
-              holder: info.accountHolder,
-              bank: info.bankName,
-              files: new Set(),
-              months: new Set(),
-            };
+            if (!accountMap[key]) {
+              accountMap[key] = {
+                account: info.accountNumber,
+                holder: info.accountHolder,
+                bank: info.bankName,
+                files: new Set(),
+                months: new Set(),
+              };
+            }
+            accountMap[key].files.add(file.name);
+            if (info.months && Array.isArray(info.months)) {
+              info.months.forEach(m => accountMap[key].months.add(m));
+            }
           }
-          accountMap[key].files.add(file.name);
-          info.months.forEach(m => accountMap[key].months.add(m));
 
         } catch (err) {
           console.log('Failed:', file.name, err.message);
@@ -189,8 +249,8 @@ export async function POST(request) {
     const sortedMonths = Array.from(allMonthSet).sort((a, b) => {
       const [ma, ya] = a.split(' ');
       const [mb, yb] = b.split(' ');
-      if (ya !== yb) return parseInt(ya) - parseInt(yb); // oldest year first
-      return monthOrder.indexOf(ma) - monthOrder.indexOf(mb); // Jan → Dec
+      if (ya !== yb) return parseInt(ya) - parseInt(yb);
+      return monthOrder.indexOf(ma) - monthOrder.indexOf(mb);
     });
 
     // Group months by year
@@ -208,8 +268,6 @@ export async function POST(request) {
 
     // ── Row 1: Year headers ──
     const yearRow = tracker.addRow([]);
-
-    // Dark navy fill for fixed cols in year row
     fixedCols.forEach((_, i) => {
       const cell = yearRow.getCell(i + 1);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002060' } };
@@ -236,7 +294,6 @@ export async function POST(request) {
 
     // ── Row 2: Column headers ──
     const headerRow = tracker.addRow([]);
-
     fixedCols.forEach((h, i) => {
       const cell = headerRow.getCell(i + 1);
       cell.value = h;
@@ -253,7 +310,7 @@ export async function POST(request) {
 
     sortedMonths.forEach((m, i) => {
       const cell = headerRow.getCell(fixedCols.length + 1 + i);
-      cell.value = m.split(' ')[0]; // just "Jan", "Feb" etc
+      cell.value = m.split(' ')[0];
       cell.font = { bold: true, color: { argb: 'FF333333' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFD700' } };
       cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -268,7 +325,7 @@ export async function POST(request) {
     // ── Data rows ──
     Object.entries(accountMap).forEach(([key, info], idx) => {
       const isEven = idx % 2 === 0;
-      const rowBg = isEven ? 'FFDCE6F1' : 'FFFFFFFF'; // alternating light blue / white
+      const rowBg = isEven ? 'FFDCE6F1' : 'FFFFFFFF';
 
       const rowData = [
         idx + 1,
@@ -282,7 +339,6 @@ export async function POST(request) {
       const row = tracker.addRow(rowData);
       row.height = 18;
 
-      // Style fixed cols
       fixedCols.forEach((_, i) => {
         const cell = row.getCell(i + 1);
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
@@ -295,7 +351,6 @@ export async function POST(request) {
         cell.alignment = { vertical: 'middle' };
       });
 
-      // Style month cols
       sortedMonths.forEach((m, i) => {
         const cell = row.getCell(fixedCols.length + 1 + i);
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -305,7 +360,6 @@ export async function POST(request) {
           bottom: { style: 'thin', color: { argb: 'FFcccccc' } },
           right: { style: 'thin', color: { argb: 'FFcccccc' } },
         };
-
         if (info.months.has(m)) {
           cell.font = { bold: true, color: { argb: 'FF002060' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFe8f0fe' } };
@@ -316,19 +370,17 @@ export async function POST(request) {
     });
 
     // ── Column widths ──
-    tracker.getColumn(1).width = 6;   // Sno
-    tracker.getColumn(2).width = 18;  // Account Number
-    tracker.getColumn(3).width = 24;  // Account Holder
-    tracker.getColumn(4).width = 22;  // Bank
-    tracker.getColumn(5).width = 38;  // File Name
+    tracker.getColumn(1).width = 6;
+    tracker.getColumn(2).width = 18;
+    tracker.getColumn(3).width = 24;
+    tracker.getColumn(4).width = 22;
+    tracker.getColumn(5).width = 38;
     for (let i = fixedCols.length + 1; i <= fixedCols.length + sortedMonths.length; i++) {
       tracker.getColumn(i).width = 8;
     }
 
-    // Freeze panes — freeze first 2 rows + first 5 cols
     tracker.views = [{ state: 'frozen', xSplit: 5, ySplit: 2 }];
 
-    // ── Serialize & return ──
     const excelBuffer = await wb.xlsx.writeBuffer();
     const excelBase64 = Buffer.from(excelBuffer).toString('base64');
 
