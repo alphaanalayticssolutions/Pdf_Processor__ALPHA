@@ -326,8 +326,9 @@ export async function POST(request) {
       return Response.json({ error: 'No Excel files found!' }, { status: 400 });
     }
 
-    // accountMap keyed by account number only — merges across bank name variants
+    // accountMap keyed by account + bank — Countryside and Hinsdale = separate rows
     const accountMap = {};
+    const accountMapOrder = [];
     const errors = [];
 
     await Promise.all(
@@ -346,8 +347,8 @@ export async function POST(request) {
           console.log('Accounts from', file.name, ':', accounts.length);
 
           for (const info of accounts) {
-            // Key by account number only — so same account merges across bank name changes
-            const key = info.accountNumber;
+            // Key by account + bank — so same account at different banks = separate rows
+            const key = `${info.accountNumber}__${info.bankName}`;
 
             if (!accountMap[key]) {
               accountMap[key] = {
@@ -357,10 +358,7 @@ export async function POST(request) {
                 files: new Set(),
                 months: new Set(),
               };
-            }
-            // Keep most complete bank name
-            if (info.bankName.length > accountMap[key].bank.length) {
-              accountMap[key].bank = info.bankName;
+              accountMapOrder.push(key);
             }
             accountMap[key].files.add(file.name);
             info.months.forEach(m => accountMap[key].months.add(m));
@@ -445,8 +443,23 @@ export async function POST(request) {
       cell.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
     });
 
-    // ── Data rows ──
-    Object.entries(accountMap).forEach(([key, info], idx) => {
+    // ── Data rows — sorted by account number then earliest month ──
+    const sortedAccountKeys = accountMapOrder.slice().sort((a, b) => {
+      const ia = accountMap[a], ib = accountMap[b];
+      if (ia.account !== ib.account) return ia.account.localeCompare(ib.account);
+      const earliest = (info) => {
+        const ms = Array.from(info.months);
+        if (!ms.length) return '9999-99';
+        return ms.map(m => {
+          const [mo, yr] = m.split(' ');
+          return `${yr}-${String(MONTH_ORDER.indexOf(mo)+1).padStart(2,'0')}`;
+        }).sort()[0];
+      };
+      return earliest(ia).localeCompare(earliest(ib));
+    });
+
+    sortedAccountKeys.forEach((key, idx) => {
+      const info = accountMap[key];
       const isEven = idx % 2 === 0;
       const rowBg = isEven ? 'FFDCE6F1' : 'FFFFFFFF';
 
