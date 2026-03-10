@@ -167,9 +167,16 @@ async function readExcelRows(arrayBuffer) {
   return rawRows;
 }
 
-// ─── STEP 2A: Group by account number + bank name ─────────────────────────────
-// Same account at different banks = separate rows (side by side in tracker)
-// Sir's requirement: ****3000 Countryside and ****3000 Hinsdale = two rows next to each other
+// ─── STEP 2A: Group by account number + canonical bank family ──────────────────
+// Countryside = separate row, all Hinsdale variants = one row, all Chase variants = one row
+function canonicalBank(bankName) {
+  const b = (bankName || '').trim().toLowerCase();
+  if (b.includes('countryside')) return 'Countryside Bank';
+  if (b.includes('hinsdale')) return 'Hinsdale Bank & Trust';
+  if (b.includes('chase') || b.includes('jpmorgan')) return 'Chase Bank';
+  return (bankName || 'Unknown').trim();
+}
+
 function groupRowsByAccount(rawRows) {
   const groups = {};
   const insertionOrder = [];
@@ -177,7 +184,7 @@ function groupRowsByAccount(rawRows) {
 
   for (const r of rawRows) {
     if (!r.account) continue;
-    const bankKey = (r.bank || 'Unknown').trim();
+    const bankKey = canonicalBank(r.bank);
     const acctKey = `${r.account}__${bankKey}`;
 
     if (!groups[acctKey]) {
@@ -194,7 +201,6 @@ function groupRowsByAccount(rawRows) {
     const g = groups[acctKey];
     if (r.holder && g.holder === 'Unknown') g.holder = r.holder;
 
-    // Statement Period is the only source of truth
     if (r.period && !g.periodsSeen.has(r.period)) {
       g.periodsSeen.add(r.period);
       const covered = parsePeriodToMonths(r.period);
@@ -202,7 +208,6 @@ function groupRowsByAccount(rawRows) {
     }
   }
 
-  // Sort by account number first, then by earliest month (so Countryside before Hinsdale for same acct)
   const firstMonth = (g) => {
     const ms = Array.from(g.monthSet);
     if (!ms.length) return '9999-99';
@@ -220,14 +225,11 @@ function groupRowsByAccount(rawRows) {
 
   return insertionOrder.map(key => {
     const g = groups[key];
-    return {
-      rawAccount: g.account,
-      rawBank: g.bank,
-      holder: g.holder,
-      months: Array.from(g.monthSet),
-    };
+    return { rawAccount: g.account, rawBank: g.bank, holder: g.holder, months: Array.from(g.monthSet) };
   });
 }
+
+
 
 
 // ─── STEP 2B: AI normalizes bank name + holder only ────────────────────────
