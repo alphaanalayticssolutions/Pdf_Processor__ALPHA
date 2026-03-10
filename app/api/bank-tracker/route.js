@@ -368,7 +368,10 @@ export async function POST(request) {
 
     // ─── Build complete timeline (all months across all accounts) ────────────
     const allMonthSet = new Set();
-    Object.values(accountMap).forEach(v => v.months.forEach(m => allMonthSet.add(m)));
+    Object.values(accountMap).forEach(v => {
+      v.months.forEach(m => allMonthSet.add(m));
+      getFullRange(v.months).forEach(m => allMonthSet.add(m));
+    });
 
     const sortedMonths = Array.from(allMonthSet).sort((a, b) => {
       const [ma, ya] = a.split(' ');
