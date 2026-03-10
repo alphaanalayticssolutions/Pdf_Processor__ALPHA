@@ -113,58 +113,68 @@ function groupRowsByAccount(rawRows) {
   }));
 }
 
-// ─── STEP 2B: Claude Haiku normalizes the grouped accounts ─────────────────
-// Returns array of normalized account objects
+// ─── STEP 2B: Claude Haiku normalizes ONLY bank names & account holders ──────
+// Months are NEVER touched by AI — they come directly from groupRowsByAccount
+// This prevents AI hallucination from cross-contaminating months across accounts
 async function normalizeWithAI(rawRows, fileName) {
+  // First group locally — this is the source of truth for months
+  const accountGroups = groupRowsByAccount(rawRows);
+  console.log(`groupRowsByAccount: ${accountGroups.length} distinct account groups in ${fileName}`);
+
+  if (accountGroups.length === 0) return [];
+
+  // Build name-only payload — no months sent to AI at all
+  const namePayload = accountGroups.map((g, i) => ({
+    idx: i,
+    rawAccount: g.rawAccount,
+    rawBank: g.rawBank,
+    holder: g.holder,
+  }));
+
   try {
-    const accountGroups = groupRowsByAccount(rawRows);
-    console.log(`groupRowsByAccount: ${accountGroups.length} distinct account groups in ${fileName}`);
-
-    if (accountGroups.length === 0) return [];
-
-    const prompt = `You are given a list of bank accounts extracted from an Excel file.
-Each entry has a raw account number, raw bank name, account holder, and months.
+    const prompt = `You are given a list of bank accounts. Normalize ONLY the bank name and account holder name.
 Return ONLY a valid JSON array, nothing else. No markdown, no explanation.
 
-Return format:
+Return format (one entry per input, same order, same idx):
 [
-  {
-    "accountNumber": "****3000",
-    "accountHolder": "2034 Superior LLC",
-    "bankName": "Countryside Bank",
-    "months": ["Jan 2018", "Feb 2018"]
-  }
+  { "idx": 0, "accountNumber": "****3000", "accountHolder": "2034 Superior LLC", "bankName": "Countryside Bank" }
 ]
 
 Rules:
-- Normalize bank names to their most complete clean form:
-  e.g. "JPMorgan Chase Bank" / "Chase Bank" / "CHASE" → "Chase Bank"
-  e.g. "Hinsdale Bank & Trust Company" / "Hinsdale Bank & Trust" / "Hinsdale Bank" → "Hinsdale Bank & Trust"
-- MERGE accounts with the same last-4-digit account number AND same normalized bank — combine their months
-- Account number: show only last 4 digits with **** prefix e.g. "****3000". If it is already short (4 digits or fewer), just add **** prefix
-- Months are already in "MMM YYYY" format — keep as-is, just deduplicate
+- Normalize bank names to clean readable form:
+  "JPMorgan Chase Bank" / "Chase Bank" / "CHASE" → "Chase Bank"
+  "Hinsdale Bank & Trust Company" / "Hinsdale Bank & Trust" / "Hinsdale Bank" → "Hinsdale Bank & Trust"
+- Account number: last 4 digits only with **** prefix. e.g. "3000" → "****3000"
 - Account holder: Title Case
-- If any field is missing use "Unknown"
+- DO NOT merge, reorder, or drop any entries — return exactly ${namePayload.length} entries
+- If any field missing use "Unknown"
 
-Raw account groups (${accountGroups.length} groups):
-${JSON.stringify(accountGroups)}`;
+Input (${namePayload.length} accounts):
+${JSON.stringify(namePayload)}`;
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2000,
+      max_tokens: 1000,
       messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
     });
 
     const text = response.content[0].text.trim();
     const clean = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
-    return Array.isArray(parsed) ? parsed : [parsed];
+    const normalized = JSON.parse(clean);
+
+    // Merge AI-normalized names back with locally-computed months
+    // idx ensures each account gets its own correct months — no cross-contamination
+    return normalized.map(n => ({
+      accountNumber: n.accountNumber,
+      accountHolder: n.accountHolder,
+      bankName: n.bankName,
+      months: accountGroups[n.idx]?.months || [],  // months come from local grouping ONLY
+    }));
 
   } catch (err) {
     console.log('AI normalization failed for', fileName, ':', err.message);
-    // Fallback: return raw groups without AI normalization
-    const groups = groupRowsByAccount(rawRows);
-    return groups.map(g => ({
+    // Fallback: raw names, local months
+    return accountGroups.map(g => ({
       accountNumber: g.rawAccount ? `****${String(g.rawAccount).slice(-4)}` : 'Unknown',
       accountHolder: g.holder || 'Unknown',
       bankName: g.rawBank || 'Unknown',
