@@ -244,17 +244,16 @@ async function normalizeWithAI(rawRows, fileName) {
   }));
 
   try {
-    const prompt = `You are given a list of bank accounts. Normalize ONLY the bank name and account holder name.
+    const prompt = `You are given a list of bank accounts. Normalize ONLY the account holder name. Keep bank name exactly as given.
 Return ONLY a valid JSON array, nothing else. No markdown, no explanation.
 
 Return format (one entry per input, same order, same idx):
 [{ "idx": 0, "accountNumber": "****3000", "accountHolder": "2034 Superior LLC", "bankName": "Countryside Bank" }]
 
 Rules:
-- Normalize bank names: "JPMorgan Chase Bank"/"Chase Bank"/"CHASE" → "Chase Bank"
-  "Hinsdale Bank & Trust Company"/"Hinsdale Bank & Trust"/"Hinsdale Bank" → "Hinsdale Bank & Trust"
 - Account number: last 4 digits with **** prefix. "3000" → "****3000"
-- Account holder: Title Case
+- Account holder: Title Case. Fix typos e.g. "RDI BUILD LLC" → "RDLD Build LLC"
+- bankName: copy EXACTLY as given in input, do NOT change or normalize it
 - Return exactly ${namePayload.length} entries, same order, DO NOT merge or drop any
 - Missing field → "Unknown"
 
