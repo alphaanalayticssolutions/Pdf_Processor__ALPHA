@@ -11,48 +11,82 @@ const MONTH_NAMES = {
 };
 
 // ─── Parse a statement period string → Set of "MMM YYYY" strings ─────────────
-// Handles formats like:
-//   "Aug 31 2019 - Sep 30 2019"   → {Aug 2019, Sep 2019}
-//   "06/29/2019 - 07/31/2019"     → {Jun 2019, Jul 2019}
-//   "December 01 2018 through December 31 2018" → {Dec 2018}
-//   "Dec 30 2017 - Jan 31 2018"   → {Dec 2017, Jan 2018}
-//   "April 30, 2021 - May 31, 2021" → {Apr 2021, May 2021}
+// Strategy: extract actual date tokens IN ORDER from the string, so each month
+// is always paired with the year that sits right next to it in the text.
+// This correctly handles:
+//   "Dec 30 2017 - Jan 31 2018"           → {Dec 2017, Jan 2018}
+//   "December 31, 2020 - January 31, 2021" → {Dec 2020, Jan 2021}
+//   "06/29/2019 - 07/31/2019"              → {Jun 2019, Jul 2019}
+//   "08/31/20 - 09/30/20"                  → {Aug 2020, Sep 2020}
+//   "August 31, 2021"                      → {Aug 2021}
 function parsePeriodToMonths(periodStr) {
   const months = new Set();
   if (!periodStr || periodStr === 'None' || periodStr === 'null') return months;
 
   const s = periodStr.trim();
+  const found = []; // ordered list of [monthIndex, year] pairs as they appear in string
 
-  // Extract all (monthIndex, year) pairs from the string
-  const found = [];
+  // ── Strategy: scan string left-to-right, extract (month, year) pairs in order ──
 
-  // Named month patterns: "Jan 2019", "January 2019", "January 31, 2019", "Jan 31 2019"
-  const namedRe = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b[\s,]*\d{0,2}[,\s]*(\b20\d{2}\b)/gi;
+  // Pass 1: Named months — match "MonthName [day,] YYYY" in one shot so year is adjacent
+  // Handles: "Dec 30 2017", "December 31, 2020", "August 31, 2021", "Jan 2019"
+  const namedRe = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b[,\s]*\d{0,2}[,\s]*\b(20\d{2}|\d{2})\b/gi;
   let m;
+  const namedMatches = [];
   while ((m = namedRe.exec(s)) !== null) {
     const mi = MONTH_NAMES[m[1].toLowerCase()];
-    const yr = parseInt(m[2]);
-    if (mi !== undefined && yr >= 2000) found.push([mi, yr]);
+    let yr = parseInt(m[2]);
+    if (yr < 100) yr += 2000;
+    if (mi !== undefined && yr >= 2000 && yr <= 2035) {
+      namedMatches.push({ idx: m.index, pair: [mi, yr] });
+    }
   }
 
-  // Numeric patterns: MM/DD/YYYY or MM-DD-YYYY
+  // Pass 2: Numeric dates — MM/DD/YYYY or MM-DD-YYYY or MM/DD/YY
   const numRe = /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/g;
+  const numMatches = [];
   while ((m = numRe.exec(s)) !== null) {
     let yr = parseInt(m[3]);
     if (yr < 100) yr += 2000;
-    const mi = parseInt(m[1]) - 1; // MM/DD/YYYY → month is first
-    if (mi >= 0 && mi <= 11 && yr >= 2000) found.push([mi, yr]);
+    const mi = parseInt(m[1]) - 1; // MM/DD/YYYY
+    if (mi >= 0 && mi <= 11 && yr >= 2000 && yr <= 2035) {
+      numMatches.push({ idx: m.index, pair: [mi, yr] });
+    }
+  }
+
+  // Merge and sort by position in string — preserves left-to-right order
+  const allMatches = [...namedMatches, ...numMatches]
+    .sort((a, b) => a.idx - b.idx)
+    .map(x => x.pair);
+
+  // Deduplicate consecutive identical pairs
+  for (const pair of allMatches) {
+    const last = found[found.length - 1];
+    if (!last || last[0] !== pair[0] || last[1] !== pair[1]) {
+      found.push(pair);
+    }
   }
 
   if (found.length === 0) return months;
 
-  // Sort by year then month
-  found.sort((a, b) => a[1] !== b[1] ? a[1] - b[1] : a[0] - b[0]);
-
-  // Mark every month from first to last date found
+  // Take first and last pair as start/end of the period
   const [startM, startY] = found[0];
   const [endM, endY] = found[found.length - 1];
 
+  // Sanity check: end should not be before start, and range should be <= 12 months
+  const startTotal = startY * 12 + startM;
+  const endTotal   = endY * 12 + endM;
+  const rangeSize  = endTotal - startTotal;
+
+  if (rangeSize < 0 || rangeSize > 12) {
+    // Something parsed wrong — just mark the individual months found, no fill
+    for (const [mi, yr] of found) {
+      months.add(`${MONTH_ORDER[mi]} ${yr}`);
+    }
+    return months;
+  }
+
+  // Fill every month from start to end
   let curM = startM, curY = startY;
   while (curY < endY || (curY === endY && curM <= endM)) {
     months.add(`${MONTH_ORDER[curM]} ${curY}`);
@@ -441,8 +475,8 @@ export async function POST(request) {
         } else if (gapSet.has(m)) {
           // ? = gap in the middle — potentially fraudulently omitted
           cell.value = '?';
-          cell.font = { bold: true, color: { argb: 'FF7B1FA2' } };
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF9C4' } };
+          cell.font = { bold: true, color: { argb: 'FFC62828' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } };
         } else {
           // blank = outside this account's date range — N/A
           cell.value = '';
@@ -463,12 +497,38 @@ export async function POST(request) {
     tracker.views = [{ state: 'frozen', xSplit: 5, ySplit: 2 }];
 
     // ── Legend row at bottom ──
-    tracker.addRow([]);
-    const legendRow = tracker.addRow(['', 'LEGEND:', '✓ = Statement present', '? = MISSING (gap in middle — request from opposition)', '']);
-    legendRow.getCell(2).font = { bold: true, size: 10 };
-    legendRow.getCell(3).font = { color: { argb: 'FF1B5E20' }, bold: true, size: 10 };
-    legendRow.getCell(4).font = { color: { argb: 'FF7B1FA2' }, bold: true, size: 10 };
-    legendRow.getCell(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF9C4' } };
+    tracker.addRow([]); // spacer
+    const legendRow = tracker.addRow([]);
+    legendRow.height = 20;
+
+    // "LEGEND:" label
+    const l1 = legendRow.getCell(2);
+    l1.value = 'LEGEND:';
+    l1.font = { bold: true, size: 10, font: 'Arial' };
+
+    // ✓ sample cell
+    const l2 = legendRow.getCell(3);
+    l2.value = '✓';
+    l2.font = { bold: true, color: { argb: 'FF1B5E20' }, size: 11 };
+    l2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+    l2.alignment = { horizontal: 'center', vertical: 'middle' };
+    l2.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
+
+    const l3 = legendRow.getCell(4);
+    l3.value = '= Statement present';
+    l3.font = { size: 10, color: { argb: 'FF1B5E20' } };
+
+    // ? sample cell
+    const l4 = legendRow.getCell(5);
+    l4.value = '?';
+    l4.font = { bold: true, color: { argb: 'FFC62828' }, size: 11 };
+    l4.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } };
+    l4.alignment = { horizontal: 'center', vertical: 'middle' };
+    l4.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
+
+    const l5 = legendRow.getCell(6);
+    l5.value = '= MISSING — request from opposition';
+    l5.font = { bold: true, size: 10, color: { argb: 'FFC62828' } };
 
     const excelBuffer = await wb.xlsx.writeBuffer();
     const excelBase64 = Buffer.from(excelBuffer).toString('base64');

@@ -475,13 +475,13 @@ function BankTrackerTool({ onBack }) {
               <div style={{ fontSize: '28px', fontWeight: '800', color: '#1a3c6e' }}>{result.totalMonths}</div>
               <div style={{ color: '#888', fontSize: '12px' }}>Months Covered</div>
             </div>
-            <div style={{ background: result.totalGaps > 0 ? '#fff9c4' : 'white', border: result.totalGaps > 0 ? '2px solid #f59e0b' : '1px solid #eee', borderRadius: '8px', padding: '16px', textAlign: 'center' }}>
-              <div style={{ fontSize: '28px', fontWeight: '800', color: result.totalGaps > 0 ? '#7B1FA2' : '#888' }}>{result.totalGaps ?? 0}</div>
-              <div style={{ color: result.totalGaps > 0 ? '#7B1FA2' : '#888', fontSize: '12px', fontWeight: result.totalGaps > 0 ? '700' : '400' }}>{result.totalGaps > 0 ? '⚠️ Gaps (Missing)' : 'Gaps (None)'}</div>
+            <div style={{ background: result.totalGaps > 0 ? '#FFEBEE' : 'white', border: result.totalGaps > 0 ? '2px solid #ef5350' : '1px solid #eee', borderRadius: '8px', padding: '16px', textAlign: 'center' }}>
+              <div style={{ fontSize: '28px', fontWeight: '800', color: result.totalGaps > 0 ? '#C62828' : '#888' }}>{result.totalGaps ?? 0}</div>
+              <div style={{ color: result.totalGaps > 0 ? '#C62828' : '#888', fontSize: '12px', fontWeight: result.totalGaps > 0 ? '700' : '400' }}>{result.totalGaps > 0 ? '⚠️ Gaps (Missing)' : 'Gaps (None)'}</div>
             </div>
           </div>
           {result.totalGaps > 0 && (
-            <div style={{ background: '#fff9c4', border: '1px solid #f59e0b', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#7B1FA2', fontWeight: '600' }}>
+            <div style={{ background: '#FFEBEE', border: '1px solid #ef5350', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#C62828', fontWeight: '600' }}>
               ⚠️ {result.totalGaps} month{result.totalGaps !== 1 ? 's' : ''} marked <strong>?</strong> in the tracker — statements missing in the middle of the date range. These should be requested from the opposition.
             </div>
           )}
