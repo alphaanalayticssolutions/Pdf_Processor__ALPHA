@@ -11,25 +11,13 @@ const MONTH_NAMES = {
 };
 
 // ─── Parse a statement period string → Set of "MMM YYYY" strings ─────────────
-// Strategy: extract actual date tokens IN ORDER from the string, so each month
-// is always paired with the year that sits right next to it in the text.
-// This correctly handles:
-//   "Dec 30 2017 - Jan 31 2018"           → {Dec 2017, Jan 2018}
-//   "December 31, 2020 - January 31, 2021" → {Dec 2020, Jan 2021}
-//   "06/29/2019 - 07/31/2019"              → {Jun 2019, Jul 2019}
-//   "08/31/20 - 09/30/20"                  → {Aug 2020, Sep 2020}
-//   "August 31, 2021"                      → {Aug 2021}
 function parsePeriodToMonths(periodStr) {
   const months = new Set();
   if (!periodStr || periodStr === 'None' || periodStr === 'null') return months;
 
   const s = periodStr.trim();
-  const found = []; // ordered list of [monthIndex, year] pairs as they appear in string
+  const found = [];
 
-  // ── Strategy: scan string left-to-right, extract (month, year) pairs in order ──
-
-  // Pass 1: Named months — match "MonthName [day,] YYYY" in one shot so year is adjacent
-  // Handles: "Dec 30 2017", "December 31, 2020", "August 31, 2021", "Jan 2019"
   const namedRe = /\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b[,\s]*\d{0,2}[,\s]*\b(20\d{2}|\d{2})\b/gi;
   let m;
   const namedMatches = [];
@@ -42,24 +30,21 @@ function parsePeriodToMonths(periodStr) {
     }
   }
 
-  // Pass 2: Numeric dates — MM/DD/YYYY or MM-DD-YYYY or MM/DD/YY
   const numRe = /\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/g;
   const numMatches = [];
   while ((m = numRe.exec(s)) !== null) {
     let yr = parseInt(m[3]);
     if (yr < 100) yr += 2000;
-    const mi = parseInt(m[1]) - 1; // MM/DD/YYYY
+    const mi = parseInt(m[1]) - 1;
     if (mi >= 0 && mi <= 11 && yr >= 2000 && yr <= 2035) {
       numMatches.push({ idx: m.index, pair: [mi, yr] });
     }
   }
 
-  // Merge and sort by position in string — preserves left-to-right order
   const allMatches = [...namedMatches, ...numMatches]
     .sort((a, b) => a.idx - b.idx)
     .map(x => x.pair);
 
-  // Deduplicate consecutive identical pairs
   for (const pair of allMatches) {
     const last = found[found.length - 1];
     if (!last || last[0] !== pair[0] || last[1] !== pair[1]) {
@@ -69,24 +54,20 @@ function parsePeriodToMonths(periodStr) {
 
   if (found.length === 0) return months;
 
-  // Take first and last pair as start/end of the period
   const [startM, startY] = found[0];
   const [endM, endY] = found[found.length - 1];
 
-  // Sanity check: end should not be before start, and range should be <= 12 months
   const startTotal = startY * 12 + startM;
   const endTotal   = endY * 12 + endM;
   const rangeSize  = endTotal - startTotal;
 
   if (rangeSize < 0 || rangeSize > 12) {
-    // Something parsed wrong — just mark the individual months found, no fill
     for (const [mi, yr] of found) {
       months.add(`${MONTH_ORDER[mi]} ${yr}`);
     }
     return months;
   }
 
-  // Fill every month from start to end
   let curM = startM, curY = startY;
   while (curY < endY || (curY === endY && curM <= endM)) {
     months.add(`${MONTH_ORDER[curM]} ${curY}`);
@@ -106,7 +87,6 @@ async function readExcelRows(arrayBuffer) {
   if (!sheet) sheet = wb.worksheets[0];
   if (!sheet) throw new Error('No worksheet found in Excel file');
 
-  // Auto-detect header row (scan first 5 rows)
   const KNOWN_HEADERS = ['MONTH', 'YEAR', 'BANK NAME', 'BANK', 'ACCOUNT NUMBER',
     'ACCOUNT NO', 'ACCOUNT HOLDER', 'DATE', 'DESCRIPTION', 'DEBIT', 'CREDIT',
     'STATEMENT PERIOD'];
@@ -134,10 +114,8 @@ async function readExcelRows(arrayBuffer) {
   });
 
   if (!headerMap || bestScore === 0) {
-    throw new Error('Could not find header row. Make sure the Excel has columns like Month, Year, Bank Name, Account Number, Account Holder.');
+    throw new Error('Could not find header row.');
   }
-
-  console.log(`Header found at row ${headerRowNumber}, score ${bestScore}:`, Object.keys(headerMap));
 
   const rawRows = [];
   const get = (row, keys) => {
@@ -163,86 +141,109 @@ async function readExcelRows(arrayBuffer) {
     rawRows.push({ bank, account, holder, period, month, year });
   });
 
-  console.log(`readExcelRows: headerRow=${headerRowNumber}, dataRows=${rawRows.length}`);
   return rawRows;
 }
 
-// ─── STEP 2A: Group by account number only (ignore bank name spelling) ────────
-// Same account number = same entity even if bank was renamed
-// Uses Statement Period to determine which months are covered
-// Falls back to Month+Year columns if no period available
-function groupRowsByAccount(rawRows) {
-  // key = account number only (not bank) — merges Countryside/Hinsdale same account
-  const groups = {};
+// ─── Normalize bank name for grouping (handles spelling variants) ─────────────
+function normalizeBankKey(bankName) {
+  if (!bankName) return 'unknown';
+  const b = bankName.toLowerCase().trim();
+  if (b.includes('chase') || b.includes('jpmorgan')) return 'chase';
+  if (b.includes('hinsdale')) return 'hinsdale';
+  if (b.includes('countryside')) return 'countryside';
+  return b;
+}
+
+// ─── STEP 2A: Group rows by account + bank (to detect gaps per bank) ─────────
+// KEY CHANGE: We group by (account, bankKey) so that when an account moves from
+// Countryside → Hinsdale, the gap between them is NOT flagged as suspicious.
+// Gaps are only flagged within the same bank's statement sequence.
+function groupRowsByAccountAndBank(rawRows) {
+  // First pass: collect months per (account, bankKey)
+  const bankGroups = {}; // key = "account__bankKey"
 
   for (const r of rawRows) {
     if (!r.account) continue;
-    const acctKey = r.account;
+    const bankKey = normalizeBankKey(r.bank);
+    const key = `${r.account}__${bankKey}`;
 
-    if (!groups[acctKey]) {
-      groups[acctKey] = {
+    if (!bankGroups[key]) {
+      bankGroups[key] = {
         account: r.account,
-        banks: new Set(),        // all bank names seen (for display)
+        bankKey,
+        rawBank: r.bank || 'Unknown',
         holder: 'Unknown',
-        monthSet: new Set(),     // months covered by statements
-        periodsSeen: new Set(),  // avoid re-parsing same period string
+        monthSet: new Set(),
+        periodsSeen: new Set(),
       };
     }
 
-    const g = groups[acctKey];
-    if (r.bank) g.banks.add(r.bank);
+    const g = bankGroups[key];
+    if (r.bank && r.bank.length > g.rawBank.length) g.rawBank = r.bank; // keep longest name
     if (r.holder && g.holder === 'Unknown') g.holder = r.holder;
 
-    // PRIMARY: use Statement Period to get covered months
-    // Statement Period = the actual PDF statement that was received
-    // This is the ONLY source of truth — transaction Month/Year is NOT used
-    // Reason: a transaction existing in Month X does NOT mean we have the statement for X
-    // And a statement period with zero transactions still means the statement was received
     if (r.period && !g.periodsSeen.has(r.period)) {
       g.periodsSeen.add(r.period);
       const covered = parsePeriodToMonths(r.period);
       covered.forEach(m => g.monthSet.add(m));
     }
-    // NOTE: No fallback to Month+Year — if a row has no Statement Period,
-    // we simply don't know if we have that statement or not → stays blank/gap
   }
 
-  return Object.values(groups).map(g => {
-    // Pick the most recent / most complete bank name for display
-    const banksArr = Array.from(g.banks);
-    const rawBank = banksArr.sort((a, b) => b.length - a.length)[0] || 'Unknown';
-    return {
-      rawAccount: g.account,
-      rawBank,
-      holder: g.holder,
-      months: Array.from(g.monthSet),
-    };
-  });
+  // Second pass: merge bank groups per account for display,
+  // but carry per-bank gap info separately
+  const accountMap = {}; // key = account number
+
+  for (const [key, bg] of Object.entries(bankGroups)) {
+    const acct = bg.account;
+    if (!accountMap[acct]) {
+      accountMap[acct] = {
+        account: acct,
+        holder: bg.holder,
+        banks: [],            // list of { bankKey, rawBank, monthSet }
+      };
+    }
+    const am = accountMap[acct];
+    if (bg.holder !== 'Unknown') am.holder = bg.holder;
+    am.banks.push({
+      bankKey: bg.bankKey,
+      rawBank: bg.rawBank,
+      monthSet: bg.monthSet,
+    });
+  }
+
+  return Object.values(accountMap);
 }
 
 // ─── STEP 2B: AI normalizes bank name + holder only ────────────────────────
 async function normalizeWithAI(rawRows, fileName) {
-  const accountGroups = groupRowsByAccount(rawRows);
-  console.log(`groupRowsByAccount: ${accountGroups.length} accounts in ${fileName}`);
+  const accountGroups = groupRowsByAccountAndBank(rawRows);
+  console.log(`groupRowsByAccountAndBank: ${accountGroups.length} accounts in ${fileName}`);
   if (accountGroups.length === 0) return [];
 
-  const namePayload = accountGroups.map((g, i) => ({
-    idx: i,
-    rawAccount: g.rawAccount,
-    rawBank: g.rawBank,
-    holder: g.holder,
-  }));
+  // For AI normalization, just send one entry per account with the best bank name
+  const namePayload = accountGroups.map((g, i) => {
+    // pick most complete bank name across all bank groups for this account
+    const bestBank = g.banks.sort((a, b) => b.rawBank.length - a.rawBank.length)[0]?.rawBank || 'Unknown';
+    return {
+      idx: i,
+      rawAccount: g.account,
+      rawBank: bestBank,
+      holder: g.holder,
+    };
+  });
 
   try {
     const prompt = `You are given a list of bank accounts. Normalize ONLY the bank name and account holder name.
 Return ONLY a valid JSON array, nothing else. No markdown, no explanation.
 
 Return format (one entry per input, same order, same idx):
-[{ "idx": 0, "accountNumber": "****3000", "accountHolder": "2034 Superior LLC", "bankName": "Countryside Bank" }]
+[{ "idx": 0, "accountNumber": "****3000", "accountHolder": "2034 Superior LLC", "bankName": "Countryside Bank / Hinsdale Bank & Trust" }]
 
 Rules:
 - Normalize bank names: "JPMorgan Chase Bank"/"Chase Bank"/"CHASE" → "Chase Bank"
   "Hinsdale Bank & Trust Company"/"Hinsdale Bank & Trust"/"Hinsdale Bank" → "Hinsdale Bank & Trust"
+  "Countryside Bank" → "Countryside Bank"
+- If an account appears at multiple banks, list them with " / " separator in chronological order
 - Account number: last 4 digits with **** prefix. "3000" → "****3000"
 - Account holder: Title Case
 - Return exactly ${namePayload.length} entries, same order, DO NOT merge or drop any
@@ -260,34 +261,41 @@ Input: ${JSON.stringify(namePayload)}`;
     const clean = text.replace(/```json|```/g, '').trim();
     const normalized = JSON.parse(clean);
 
-    // months always come from local grouping — never from AI
     return normalized.map(n => ({
       accountNumber: n.accountNumber,
       accountHolder: n.accountHolder,
       bankName: n.bankName,
-      months: accountGroups[n.idx]?.months || [],
+      banks: accountGroups[n.idx]?.banks || [],
     }));
 
   } catch (err) {
     console.log('AI normalization failed for', fileName, ':', err.message);
-    return accountGroups.map(g => ({
-      accountNumber: g.rawAccount ? `****${String(g.rawAccount).slice(-4)}` : 'Unknown',
-      accountHolder: g.holder || 'Unknown',
-      bankName: g.rawBank || 'Unknown',
-      months: g.months,
-    }));
+    return accountGroups.map(g => {
+      const bestBank = g.banks.sort((a, b) => b.rawBank.length - a.rawBank.length)[0]?.rawBank || 'Unknown';
+      return {
+        accountNumber: g.account ? `****${String(g.account).slice(-4)}` : 'Unknown',
+        accountHolder: g.holder || 'Unknown',
+        bankName: bestBank,
+        banks: g.banks,
+      };
+    });
   }
 }
 
-// ─── Helper: get all months between first and last in a set ──────────────────
-function getFullRange(monthSet) {
-  if (monthSet.size === 0) return [];
-  const sorted = Array.from(monthSet).sort((a, b) => {
+// ─── Helper: sort months chronologically ─────────────────────────────────────
+function sortMonths(monthSet) {
+  return Array.from(monthSet).sort((a, b) => {
     const [ma, ya] = a.split(' ');
     const [mb, yb] = b.split(' ');
     if (ya !== yb) return parseInt(ya) - parseInt(yb);
     return MONTH_ORDER.indexOf(ma) - MONTH_ORDER.indexOf(mb);
   });
+}
+
+// ─── Helper: get all months between first and last in a set ──────────────────
+function getFullRange(monthSet) {
+  if (monthSet.size === 0) return [];
+  const sorted = sortMonths(monthSet);
   const [firstM, firstY] = sorted[0].split(' ');
   const [lastM, lastY] = sorted[sorted.length - 1].split(' ');
   const range = [];
@@ -299,6 +307,26 @@ function getFullRange(monthSet) {
     if (curM === 12) { curM = 0; curY++; }
   }
   return range;
+}
+
+// ─── NEW: Compute gap set per-bank, then union for display ───────────────────
+// A month is a "?" gap only if it falls WITHIN a single bank's statement range
+// but has no statement for that bank. Cross-bank transitions are NOT gaps.
+function computeGapSet(banks, allMonthsForAccount) {
+  const gapSet = new Set();
+
+  for (const bankInfo of banks) {
+    if (bankInfo.monthSet.size === 0) continue;
+    const fullRange = getFullRange(bankInfo.monthSet);
+    for (const m of fullRange) {
+      if (!bankInfo.monthSet.has(m)) {
+        // This month is within this bank's range but missing — it's a suspicious gap
+        gapSet.add(m);
+      }
+    }
+  }
+
+  return gapSet;
 }
 
 // ─── MAIN POST HANDLER ─────────────────────────────────────────────────────
@@ -315,7 +343,7 @@ export async function POST(request) {
       return Response.json({ error: 'No Excel files found!' }, { status: 400 });
     }
 
-    // accountMap keyed by account number only — merges across bank name variants
+    // accountMap keyed by account number only
     const accountMap = {};
     const errors = [];
 
@@ -323,7 +351,6 @@ export async function POST(request) {
       excelFiles.map(async (file) => {
         try {
           const arrayBuffer = await file.arrayBuffer();
-          console.log('Reading Excel:', file.name);
           const rawRows = await readExcelRows(arrayBuffer);
 
           if (rawRows.length === 0) {
@@ -332,10 +359,8 @@ export async function POST(request) {
           }
 
           const accounts = await normalizeWithAI(rawRows, file.name);
-          console.log('Accounts from', file.name, ':', accounts.length);
 
           for (const info of accounts) {
-            // Key by account number only — so same account merges across bank name changes
             const key = info.accountNumber;
 
             if (!accountMap[key]) {
@@ -344,15 +369,35 @@ export async function POST(request) {
                 holder: info.accountHolder,
                 bank: info.bankName,
                 files: new Set(),
-                months: new Set(),
+                banks: [],         // per-bank groups with their monthSets
+                allMonths: new Set(), // union of all months across all banks
               };
             }
-            // Keep most complete bank name
-            if (info.bankName.length > accountMap[key].bank.length) {
-              accountMap[key].bank = info.bankName;
+
+            const am = accountMap[key];
+            if (info.bankName.length > am.bank.length) am.bank = info.bankName;
+            am.files.add(file.name);
+
+            // Merge banks array — if same bankKey exists, merge monthSets
+            for (const newBankInfo of info.banks) {
+              const existing = am.banks.find(b => b.bankKey === newBankInfo.bankKey);
+              if (existing) {
+                newBankInfo.monthSet.forEach(m => existing.monthSet.add(m));
+                if (newBankInfo.rawBank.length > existing.rawBank.length) {
+                  existing.rawBank = newBankInfo.rawBank;
+                }
+              } else {
+                am.banks.push({
+                  bankKey: newBankInfo.bankKey,
+                  rawBank: newBankInfo.rawBank,
+                  monthSet: new Set(newBankInfo.monthSet),
+                });
+              }
             }
-            accountMap[key].files.add(file.name);
-            info.months.forEach(m => accountMap[key].months.add(m));
+
+            // Rebuild allMonths from banks
+            am.allMonths = new Set();
+            am.banks.forEach(b => b.monthSet.forEach(m => am.allMonths.add(m)));
           }
 
         } catch (err) {
@@ -366,19 +411,15 @@ export async function POST(request) {
       return Response.json({ error: 'No accounts could be extracted from Excel files.' }, { status: 400 });
     }
 
-    // ─── Build complete timeline (all months across all accounts) ────────────
+    // ─── Build complete timeline ─────────────────────────────────────────────
     const allMonthSet = new Set();
     Object.values(accountMap).forEach(v => {
-      v.months.forEach(m => allMonthSet.add(m));
-      getFullRange(v.months).forEach(m => allMonthSet.add(m));
+      v.allMonths.forEach(m => allMonthSet.add(m));
+      // Also include the full range of each bank (to show gap columns)
+      v.banks.forEach(b => getFullRange(b.monthSet).forEach(m => allMonthSet.add(m)));
     });
 
-    const sortedMonths = Array.from(allMonthSet).sort((a, b) => {
-      const [ma, ya] = a.split(' ');
-      const [mb, yb] = b.split(' ');
-      if (ya !== yb) return parseInt(ya) - parseInt(yb);
-      return MONTH_ORDER.indexOf(ma) - MONTH_ORDER.indexOf(mb);
-    });
+    const sortedMonths = sortMonths(allMonthSet);
 
     // Group months by year for header row
     const yearGroups = {};
@@ -439,9 +480,8 @@ export async function POST(request) {
       const isEven = idx % 2 === 0;
       const rowBg = isEven ? 'FFDCE6F1' : 'FFFFFFFF';
 
-      // Compute full range for this account to detect gaps
-      const fullRange = getFullRange(info.months);
-      const gapSet = new Set(fullRange.filter(m => !info.months.has(m)));
+      // Compute gaps per-bank (the key fix!)
+      const gapSet = computeGapSet(info.banks, info.allMonths);
 
       const rowData = [
         idx + 1,
@@ -451,9 +491,9 @@ export async function POST(request) {
         Array.from(info.files).join(', '),
       ];
       sortedMonths.forEach(m => {
-        if (info.months.has(m)) rowData.push('✓');
-        else if (gapSet.has(m)) rowData.push('?');  // gap in middle = suspicious missing
-        else rowData.push('');                        // outside this account's range = truly N/A
+        if (info.allMonths.has(m)) rowData.push('✓');
+        else if (gapSet.has(m)) rowData.push('?');
+        else rowData.push('');
       });
 
       const row = tracker.addRow(rowData);
@@ -471,18 +511,15 @@ export async function POST(request) {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
 
-        if (info.months.has(m)) {
-          // ✓ = statement present
+        if (info.allMonths.has(m)) {
           cell.value = '✓';
           cell.font = { bold: true, color: { argb: 'FF1B5E20' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
         } else if (gapSet.has(m)) {
-          // ? = gap in the middle — potentially fraudulently omitted
           cell.value = '?';
           cell.font = { bold: true, color: { argb: 'FFC62828' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } };
         } else {
-          // blank = outside this account's date range — N/A
           cell.value = '';
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
         }
@@ -493,7 +530,7 @@ export async function POST(request) {
     tracker.getColumn(1).width = 6;
     tracker.getColumn(2).width = 18;
     tracker.getColumn(3).width = 24;
-    tracker.getColumn(4).width = 24;
+    tracker.getColumn(4).width = 36;
     tracker.getColumn(5).width = 38;
     for (let i = fixedCols.length + 1; i <= fixedCols.length + sortedMonths.length; i++) {
       tracker.getColumn(i).width = 7;
@@ -501,16 +538,14 @@ export async function POST(request) {
     tracker.views = [{ state: 'frozen', xSplit: 5, ySplit: 2 }];
 
     // ── Legend row at bottom ──
-    tracker.addRow([]); // spacer
+    tracker.addRow([]);
     const legendRow = tracker.addRow([]);
     legendRow.height = 20;
 
-    // "LEGEND:" label
     const l1 = legendRow.getCell(2);
     l1.value = 'LEGEND:';
-    l1.font = { bold: true, size: 10, font: 'Arial' };
+    l1.font = { bold: true, size: 10 };
 
-    // ✓ sample cell
     const l2 = legendRow.getCell(3);
     l2.value = '✓';
     l2.font = { bold: true, color: { argb: 'FF1B5E20' }, size: 11 };
@@ -522,7 +557,6 @@ export async function POST(request) {
     l3.value = '= Statement present';
     l3.font = { size: 10, color: { argb: 'FF1B5E20' } };
 
-    // ? sample cell
     const l4 = legendRow.getCell(5);
     l4.value = '?';
     l4.font = { bold: true, color: { argb: 'FFC62828' }, size: 11 };
@@ -537,11 +571,11 @@ export async function POST(request) {
     const excelBuffer = await wb.xlsx.writeBuffer();
     const excelBase64 = Buffer.from(excelBuffer).toString('base64');
 
-    // Count gaps across all accounts
+    // Count gaps
     let totalGaps = 0;
     Object.values(accountMap).forEach(info => {
-      const fullRange = getFullRange(info.months);
-      totalGaps += fullRange.filter(m => !info.months.has(m)).length;
+      const gapSet = computeGapSet(info.banks, info.allMonths);
+      totalGaps += gapSet.size;
     });
 
     return Response.json({
