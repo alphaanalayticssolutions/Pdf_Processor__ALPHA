@@ -377,8 +377,8 @@ function BankTrackerTool({ onBack }) {
           {[
             { n: '1', t: 'Run Step 5B (Bank Extraction) first — get the Excel output files' },
             { n: '2', t: 'Upload those Excel files here — folder upload or pick individual files' },
-            { n: '3', t: 'AI reads each file, normalizes bank names, months & account numbers' },
-            { n: '4', t: 'Download tracker Excel or ZIP with X marks per account per month' },
+            { n: '3', t: 'Tool reads Statement Period per account — marks ✓ for covered months, ? for gaps in the middle' },
+            { n: '4', t: 'Download tracker Excel — gaps (?) = missing statements to request from opposition' },
           ].map(s => (
             <div key={s.n} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
               <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>{s.n}</span>
@@ -466,7 +466,7 @@ function BankTrackerTool({ onBack }) {
       {result && (
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 16px' }}>✅ Tracker Generated!</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div style={{ background: 'white', borderRadius: '8px', padding: '16px', textAlign: 'center' }}>
               <div style={{ fontSize: '28px', fontWeight: '800', color: '#1a3c6e' }}>{result.totalAccounts}</div>
               <div style={{ color: '#888', fontSize: '12px' }}>Distinct Accounts</div>
@@ -475,7 +475,16 @@ function BankTrackerTool({ onBack }) {
               <div style={{ fontSize: '28px', fontWeight: '800', color: '#1a3c6e' }}>{result.totalMonths}</div>
               <div style={{ color: '#888', fontSize: '12px' }}>Months Covered</div>
             </div>
+            <div style={{ background: result.totalGaps > 0 ? '#fff9c4' : 'white', border: result.totalGaps > 0 ? '2px solid #f59e0b' : '1px solid #eee', borderRadius: '8px', padding: '16px', textAlign: 'center' }}>
+              <div style={{ fontSize: '28px', fontWeight: '800', color: result.totalGaps > 0 ? '#7B1FA2' : '#888' }}>{result.totalGaps ?? 0}</div>
+              <div style={{ color: result.totalGaps > 0 ? '#7B1FA2' : '#888', fontSize: '12px', fontWeight: result.totalGaps > 0 ? '700' : '400' }}>{result.totalGaps > 0 ? '⚠️ Gaps (Missing)' : 'Gaps (None)'}</div>
+            </div>
           </div>
+          {result.totalGaps > 0 && (
+            <div style={{ background: '#fff9c4', border: '1px solid #f59e0b', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#7B1FA2', fontWeight: '600' }}>
+              ⚠️ {result.totalGaps} month{result.totalGaps !== 1 ? 's' : ''} marked <strong>?</strong> in the tracker — statements missing in the middle of the date range. These should be requested from the opposition.
+            </div>
+          )}
 
           {result.errors && result.errors.length > 0 && (
             <div style={{ background: '#fff0f0', borderRadius: '8px', padding: '12px', marginBottom: '16px' }}>
