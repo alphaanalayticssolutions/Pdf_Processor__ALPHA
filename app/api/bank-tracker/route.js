@@ -194,16 +194,17 @@ function groupRowsByAccount(rawRows) {
     if (r.holder && g.holder === 'Unknown') g.holder = r.holder;
 
     // PRIMARY: use Statement Period to get covered months
+    // Statement Period = the actual PDF statement that was received
+    // This is the ONLY source of truth — transaction Month/Year is NOT used
+    // Reason: a transaction existing in Month X does NOT mean we have the statement for X
+    // And a statement period with zero transactions still means the statement was received
     if (r.period && !g.periodsSeen.has(r.period)) {
       g.periodsSeen.add(r.period);
       const covered = parsePeriodToMonths(r.period);
       covered.forEach(m => g.monthSet.add(m));
     }
-
-    // FALLBACK: if no period column, use Month+Year from transaction
-    if (!r.period && r.month && r.year) {
-      g.monthSet.add(`${r.month} ${parseInt(r.year)}`);
-    }
+    // NOTE: No fallback to Month+Year — if a row has no Statement Period,
+    // we simply don't know if we have that statement or not → stays blank/gap
   }
 
   return Object.values(groups).map(g => {
