@@ -4,49 +4,20 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const SYSTEM_PROMPT = `You are a financial transaction categorizer. Your job is to assign a category to each transaction description.
-
-BEFORE YOU BEGIN:
-Scan the entire batch first. Do not assign any category until you have reviewed all descriptions and completed full merchant normalization across the whole dataset.
-
-STEP 1 — MERCHANT NORMALIZATION
-- Identify the core merchant, brand, or service from each description
-- Normalize variations of the same merchant into one identity
-- Group all descriptions by normalized merchant before assigning any category
-- Example normalizations:
-  "DOMINOS", "DOMINO'S", "DOMINOS PIZZA", "DOMINOS #4521" → DOMINOS
-  "UBER TRIP", "UBER *TRIP HELP.UBER.COM", "UBER BV" → UBER
-  "AMZN MKTPLACE", "AMAZON.COM", "AMAZON PRIME" → AMAZON
-
-STEP 2 — CATEGORY ASSIGNMENT
-- Assign one category per normalized merchant — every variation gets the same category, no exceptions
-- Use the PRIMARY purpose of the transaction when multiple categories could apply
-- For ambiguous retailers (Walmart, Target), default to Shopping unless description explicitly says Grocery
-- If you cannot confidently identify the merchant or type, assign Other — never guess
-- Do not modify the original description text
-
-CATEGORIES:
-- Food → restaurants, fast food, coffee, dining (Dominos, McDonald's, Starbucks, Chipotle)
-- Grocery → grocery stores (Pick N Save, Aldi, Kroger, Whole Foods, Walmart Grocery)
-- Gas → fuel stations (Shell, BP, Exxon, Chevron, Mobil, Speedway)
-- Utilities → phone, internet, electricity bills (AT&T, Verizon, ComEd)
-- Shopping → retail and online (Amazon, Kohl's, Target, Walmart, Best Buy)
-- Loan Payment → card payments, loan payments, AUTOPAY, minimum payment
-- Tax → IRS payments, state tax
-- Government Benefits → SSA, Social Security, government deposits
-- Travel → airlines, hotels, rideshare, parking (Uber, Lyft, Airbnb)
-- Healthcare → pharmacy, hospital, doctor (CVS, Walgreens)
-- Subscription → streaming or recurring services (Netflix, Spotify, Apple, Google)
-- Transfer → money transfers (Zelle, Venmo, PayPal, ACH, wire transfer)
-- Salary / Income → payroll, direct deposit
-- Other → does not clearly fit any category above
-
-These category examples are GUIDANCE only, not strict keyword rules. Use reasoning to identify merchant type.
-If a transaction clearly belongs to a category not listed above, you may create one — but stay consistent across the full dataset.
+const SYSTEM_PROMPT = `You are a financial transaction categorizer.
 
 INPUT: A JSON array of distinct transaction descriptions.
-OUTPUT: Return ONLY a valid JSON array. No explanation, no markdown, no extra text.
-Format: [{"description": "original description", "category": "category name"}, ...]`;
+
+OUTPUT RULES:
+Return ONLY valid JSON.
+Do not include markdown.
+Do not include explanation.
+
+Format:
+[
+ {"description":"original description","category":"category name"}
+]
+`;
 
 function chunkArray(arr, size) {
   const chunks = [];
@@ -54,6 +25,15 @@ function chunkArray(arr, size) {
     chunks.push(arr.slice(i, i + size));
   }
   return chunks;
+}
+
+function extractJSONArray(text) {
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start === -1 || end === -1) {
+    throw new Error("No JSON array found in Claude response");
+  }
+  return text.slice(start, end + 1);
 }
 
 export async function POST(request) {
@@ -73,7 +53,7 @@ export async function POST(request) {
 
     for (const chunk of chunks) {
       const message = await client.messages.create({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-3-5-sonnet-20241022",
         max_tokens: 4096,
         system: SYSTEM_PROMPT,
         messages: [
@@ -88,11 +68,23 @@ export async function POST(request) {
         .map((b) => (b.type === "text" ? b.text : ""))
         .join("");
 
-      const clean = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
+      // remove markdown
+      const cleaned = text.replace(/```json|```/g, "").trim();
+
+      // extract only JSON array
+      const jsonText = extractJSONArray(cleaned);
+
+      let parsed;
+
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch (err) {
+        console.log("JSON parse failed:", jsonText);
+        throw new Error("Claude returned invalid JSON");
+      }
 
       if (!Array.isArray(parsed)) {
-        throw new Error("Claude did not return a valid JSON array");
+        throw new Error("Claude did not return an array");
       }
 
       allResults.push(...parsed);
@@ -105,6 +97,13 @@ export async function POST(request) {
     });
   } catch (err) {
     console.log("Categorise descriptions error:", err.message);
-    return Response.json({ error: err.message }, { status: 500 });
+
+    return Response.json(
+      {
+        success: false,
+        error: err.message,
+      },
+      { status: 500 }
+    );
   }
 }
