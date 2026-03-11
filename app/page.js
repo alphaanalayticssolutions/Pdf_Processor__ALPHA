@@ -240,9 +240,18 @@ function DescriptionCategoriserTool({ onBack }) {
     setLoading(true); setError(''); setResults([]); setDone(false);
 
     try {
-      // Step 1: Load SheetJS from CDN
+      // Step 1: Load SheetJS via script tag (works in Next.js, unlike dynamic import)
       setProgress('Loading Excel parser...');
-      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('Failed to load Excel parser. Check your internet connection.'));
+          document.head.appendChild(script);
+        });
+      }
+      const XLSX = window.XLSX;
 
       const allDescriptions = new Set();
 
@@ -250,7 +259,7 @@ function DescriptionCategoriserTool({ onBack }) {
       for (const file of selectedFiles) {
         setProgress(`Reading ${file.name}...`);
         const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: 'array' });
+        const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
 
         for (const sheetName of workbook.SheetNames) {
           const sheet = workbook.Sheets[sheetName];
@@ -267,7 +276,7 @@ function DescriptionCategoriserTool({ onBack }) {
       }
 
       if (allDescriptions.size === 0) {
-        throw new Error('No "Description" column found in the uploaded Excel file(s). Make sure the column header is exactly "Description".');
+        throw new Error('No "Description" column found. Make sure the column header is exactly "Description".');
       }
 
       const descArray = [...allDescriptions];
