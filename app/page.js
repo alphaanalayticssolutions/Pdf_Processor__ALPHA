@@ -110,7 +110,8 @@ export default function Home() {
     { id: 'stamping', step: 4, icon: '📄', title: 'Bates Stamping', desc: 'Upload folder → AI detects empty corner → Stamps every page sequentially', active: true },
     { id: 'extraction', step: 5, icon: '🔍', title: 'Extraction', desc: 'Extract data from Invoices, Bank Statements & Tax documents into Excel', active: true },
     { id: 'tracker', step: 6, icon: '📋', title: 'Bank Statement Tracker', desc: 'Upload bank extraction Excel files → AI generates month-wise account tracker', active: true },
-    { id: 'indexing', step: 7, icon: '📁', title: 'Indexing', desc: 'Coming soon — Auto-organize files with AI-generated index', active: false },
+    { id: 'desc-categoriser', step: 7, icon: '🏷️', title: 'Description Categoriser', desc: 'Upload Excel with distinct descriptions → AI categorises each → Download Excel', active: true },
+    { id: 'indexing', step: 8, icon: '📁', title: 'Indexing', desc: 'Coming soon — Auto-organize files with AI-generated index', active: false },
   ];
 
   return (
@@ -142,7 +143,7 @@ export default function Home() {
 
       {!activeTool && (
         <div style={{ background: 'white', borderBottom: '1px solid #eee', padding: '14px 20px', overflowX: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', maxWidth: '900px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', maxWidth: '1100px', margin: '0 auto' }}>
             {tools.filter(t => t.active).map((t, i, arr) => (
               <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: '#f0f4ff', border: '1px solid #dce6ff' }}>
@@ -162,7 +163,7 @@ export default function Home() {
             {tools.map(tool => (
               <div key={tool.id} onClick={() => tool.active && setActiveTool(tool.id)}
                 style={{ background: 'white', borderRadius: '12px', padding: '24px', cursor: tool.active ? 'pointer' : 'default', border: '2px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', opacity: tool.active ? 1 : 0.5, transition: 'all 0.2s', position: 'relative' }}
-                onMouseOver={e => { if (tool.active) e.currentTarget.style.borderColor = '#1a3c6e'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(26,60,110,0.12)'; }}
+                onMouseOver={e => { if (tool.active) { e.currentTarget.style.borderColor = '#1a3c6e'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(26,60,110,0.12)'; } }}
                 onMouseOut={e => { e.currentTarget.style.borderColor = '#eee'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.05)'; }}>
                 <div style={{ fontSize: '32px', marginBottom: '10px' }}>{tool.icon}</div>
                 <h3 style={{ color: '#1a3c6e', margin: '0 0 8px', fontSize: '16px', fontWeight: '700' }}>{tool.title}</h3>
@@ -178,12 +179,331 @@ export default function Home() {
         {activeTool === 'stamping' && <StampingTool onBack={() => setActiveTool(null)} />}
         {activeTool === 'extraction' && <ExtractionTool onBack={() => setActiveTool(null)} />}
         {activeTool === 'tracker' && <BankTrackerTool onBack={() => setActiveTool(null)} />}
+        {activeTool === 'desc-categoriser' && <DescriptionCategoriserTool onBack={() => setActiveTool(null)} />}
       </div>
 
       <div style={{ textAlign: 'center', padding: '20px', color: '#ccc', fontSize: '11px', letterSpacing: '1px' }}>
         POWERED BY CLAUDE AI • ANTHROPIC
       </div>
     </main>
+  );
+}
+
+// ==========================================
+// DESCRIPTION CATEGORISER TOOL
+// ==========================================
+function DescriptionCategoriserTool({ onBack }) {
+  const [allFiles, setAllFiles] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [error, setError] = useState('');
+  const [results, setResults] = useState([]);
+  const [done, setDone] = useState(false);
+
+  const loadFiles = (fileList) => {
+    const excels = Array.from(fileList).filter(f =>
+      (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')) && f.size > 0
+    );
+    setAllFiles(prev => {
+      const existing = new Map(prev.map(f => [f.name, f]));
+      excels.forEach(f => existing.set(f.name, f));
+      return Array.from(existing.values());
+    });
+    setSelected(prev => {
+      const updated = { ...prev };
+      excels.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
+      return updated;
+    });
+    setResults([]);
+    setDone(false);
+    setError('');
+  };
+
+  const handleFolderSelect = (e) => loadFiles(e.target.files);
+  const handleFileSelect = (e) => loadFiles(e.target.files);
+  const toggleOne = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleAll = () => {
+    const allChecked = allFiles.every(f => selected[f.name]);
+    const sel = {};
+    allFiles.forEach(f => sel[f.name] = !allChecked);
+    setSelected(sel);
+  };
+  const clearAll = () => { setAllFiles([]); setSelected({}); setResults([]); setDone(false); setError(''); };
+
+  const selectedFiles = allFiles.filter(f => selected[f.name]);
+  const allChecked = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
+  const someChecked = allFiles.some(f => selected[f.name]);
+
+  // Read Excel file in browser using SheetJS-style manual parsing
+  const readDescriptionsFromFile = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          // Parse binary Excel manually — extract all cell text values
+          const buffer = e.target.result;
+          const bytes = new Uint8Array(buffer);
+          // Convert to string to search for XML content (xlsx is a zip with XML)
+          const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+          // Extract shared strings and cell values via regex from XML
+          const sharedStrings = [];
+          const ssMatches = text.matchAll(/<si>.*?<\/si>/gs);
+          for (const m of ssMatches) {
+            const tMatches = [...m[0].matchAll(/<t[^>]*>(.*?)<\/t>/gs)];
+            sharedStrings.push(tMatches.map(t => t[1]).join(''));
+          }
+          // Get inline strings and shared string refs from sheet
+          const rows = [];
+          const rowMatches = text.matchAll(/<row[^>]*>(.*?)<\/row>/gs);
+          for (const row of rowMatches) {
+            const cells = [];
+            const cellMatches = row[1].matchAll(/<c[^>]*t="([^"]*)"[^>]*>.*?<v>(.*?)<\/v>.*?<\/c>|<c[^>]*>.*?<v>(.*?)<\/v>.*?<\/c>/gs);
+            for (const cell of cellMatches) {
+              if (cell[1] === 's') {
+                // shared string
+                const idx = parseInt(cell[2]);
+                cells.push(sharedStrings[idx] || '');
+              } else if (cell[1] === 'inlineStr') {
+                cells.push(cell[2] || '');
+              } else {
+                cells.push(cell[3] || cell[2] || '');
+              }
+            }
+            rows.push(cells);
+          }
+          resolve(rows);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const handleCategorise = async () => {
+    if (selectedFiles.length === 0) { setError('Please select at least one Excel file.'); return; }
+    setLoading(true); setError(''); setResults([]); setDone(false);
+
+    try {
+      // Collect all distinct descriptions across all selected files
+      const allDescriptions = new Set();
+
+      for (const file of selectedFiles) {
+        setProgress(`Reading ${file.name}...`);
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Use our API to parse the Excel and get descriptions
+        const res = await fetch('/api/categorise-descriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ parseOnly: true, fileName: file.name }),
+        });
+
+        // Since we can't easily parse xlsx in browser, send file to API
+        const fd = new FormData();
+        fd.append('file', file);
+        const parseRes = await fetch('/api/categorise-descriptions', {
+          method: 'POST',
+          body: fd,
+        });
+        const parseData = await parseRes.json();
+        if (!parseRes.ok) throw new Error(parseData.error || 'Failed to read file');
+
+        parseData.descriptions.forEach(d => allDescriptions.add(d));
+      }
+
+      const descArray = [...allDescriptions];
+      setProgress(`Categorising ${descArray.length} distinct descriptions with AI...`);
+
+      const res = await fetch('/api/categorise-descriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ descriptions: descArray }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Categorisation failed');
+
+      setResults(data.results);
+      setDone(true);
+      setProgress('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadExcel = () => {
+    // Build CSV as fallback (API returns excel via route)
+    const rows = [['Description', 'Category'], ...results.map(r => [r.description, r.category])];
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'categorised_descriptions.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
+      <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
+        <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 7</span>
+        <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>🏷️ Description Categoriser</h2>
+      </div>
+      <p style={{ color: '#888', fontSize: '13px', marginBottom: '24px' }}>
+        Upload Excel files with distinct descriptions → AI categorises each one → Download Excel with Description + Category
+      </p>
+
+      {/* How it works */}
+      <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
+        <p style={{ fontWeight: '700', color: '#1a3c6e', fontSize: '13px', margin: '0 0 10px' }}>📝 How it works:</p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          {[
+            { n: '1', t: 'Upload folder or pick individual Excel files with a Description column' },
+            { n: '2', t: 'AI normalises merchant names — same brand always gets same category' },
+            { n: '3', t: 'Categories: Food, Grocery, Gas, Utilities, Shopping, Tax, Travel & more' },
+            { n: '4', t: 'Download Excel — 2 columns: Description + Category' },
+          ].map(s => (
+            <div key={s.n} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>{s.n}</span>
+              <span style={{ color: '#555', fontSize: '12px', lineHeight: '1.5' }}>{s.t}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Upload area */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
+          <span style={{ fontSize: '28px' }}>📁</span>
+          <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '13px' }}>Upload Folder</span>
+          <span style={{ color: '#aaa', fontSize: '11px' }}>All Excel files in folder</span>
+          <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect} style={{ display: 'none' }} />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #276749', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
+          <span style={{ fontSize: '28px' }}>📊</span>
+          <span style={{ color: '#276749', fontWeight: '700', fontSize: '13px' }}>Upload Excel Files</span>
+          <span style={{ color: '#aaa', fontSize: '11px' }}>Pick specific .xlsx files</span>
+          <input type="file" multiple accept=".xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
+        </label>
+      </div>
+
+      {allFiles.length === 0 && (
+        <p style={{ color: '#aaa', fontSize: '12px', textAlign: 'center', marginBottom: '20px' }}>
+          💡 Excel must have a <strong>Description</strong> column with distinct values
+        </p>
+      )}
+
+      {/* File checklist */}
+      {allFiles.length > 0 && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>
+              📊 Select files to process{' '}
+              <span style={{ color: '#888', fontWeight: '400', fontSize: '12px' }}>({selectedFiles.length} of {allFiles.length} selected)</span>
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={toggleAll}
+                style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                {allChecked ? 'Deselect All' : 'Select All'}
+              </button>
+              <button onClick={clearAll}
+                style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                Clear
+              </button>
+            </div>
+          </div>
+          <div style={{ border: '1px solid #eee', borderRadius: '10px', overflow: 'hidden', maxHeight: '280px', overflowY: 'auto' }}>
+            {allFiles.map((f, i) => (
+              <div key={f.name} onClick={() => toggleOne(f.name)}
+                style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', background: selected[f.name] ? '#f0f4ff' : (i % 2 === 0 ? 'white' : '#fafafa'), borderBottom: i < allFiles.length - 1 ? '1px solid #f0f0f0' : 'none', cursor: 'pointer' }}>
+                <div style={{ width: '18px', height: '18px', borderRadius: '4px', border: `2px solid ${selected[f.name] ? '#1a3c6e' : '#ccc'}`, background: selected[f.name] ? '#1a3c6e' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {selected[f.name] && <span style={{ color: 'white', fontSize: '11px', fontWeight: '700' }}>✓</span>}
+                </div>
+                <span style={{ fontSize: '13px', color: selected[f.name] ? '#1a3c6e' : '#555', fontWeight: selected[f.name] ? '600' : '400', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  📊 {f.name}
+                </span>
+                <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0 }}>{(f.size / 1024).toFixed(0)} KB</span>
+              </div>
+            ))}
+          </div>
+          {!someChecked && allFiles.length > 0 && (
+            <p style={{ color: '#cc0000', fontSize: '12px', marginTop: '6px' }}>⚠️ Please select at least one file.</p>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>
+          ❌ {error}
+        </div>
+      )}
+
+      <button onClick={handleCategorise} disabled={loading || selectedFiles.length === 0}
+        style={{ width: '100%', padding: '14px', background: loading || selectedFiles.length === 0 ? '#ccc' : '#0f2444', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: loading || selectedFiles.length === 0 ? 'not-allowed' : 'pointer', marginBottom: '20px' }}>
+        {loading
+          ? `⏳ ${progress || 'Processing...'}`
+          : `🏷️ Categorise${selectedFiles.length > 0 ? ` (${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''})` : ''}`}
+      </button>
+
+      {/* Results */}
+      {done && results.length > 0 && (
+        <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0' }}>
+              ✅ {results.length} descriptions categorised!
+            </p>
+            <button onClick={downloadExcel}
+              style={{ padding: '10px 20px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
+              ⬇ Download Excel
+            </button>
+          </div>
+
+          {/* Preview table */}
+          <div style={{ border: '1px solid #86efac', borderRadius: '8px', overflow: 'hidden', maxHeight: '320px', overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead style={{ position: 'sticky', top: 0 }}>
+                <tr style={{ background: '#166534' }}>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: 'white', fontWeight: '700' }}>#</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: 'white', fontWeight: '700' }}>Description</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: 'white', fontWeight: '700' }}>Category</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((row, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#f0fff4', borderBottom: '1px solid #dcfce7' }}>
+                    <td style={{ padding: '8px 14px', color: '#aaa', fontSize: '11px' }}>{i + 1}</td>
+                    <td style={{ padding: '8px 14px', color: '#333', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.description}</td>
+                    <td style={{ padding: '8px 14px' }}>
+                      <span style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac', borderRadius: '20px', padding: '2px 10px', fontSize: '11px', fontWeight: '700' }}>
+                        {row.category}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {results.length > 50 && (
+            <p style={{ color: '#888', fontSize: '11px', textAlign: 'center', marginTop: '8px' }}>
+              Showing all {results.length} rows — download Excel for full data
+            </p>
+          )}
+
+          <button onClick={clearAll}
+            style={{ width: '100%', marginTop: '14px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+            ↺ Upload Another File
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -282,7 +602,7 @@ function DuplicateTool({ onBack }) {
 }
 
 // ==========================================
-// BANK STATEMENT TRACKER TOOL — REWRITTEN
+// BANK STATEMENT TRACKER TOOL
 // ==========================================
 function BankTrackerTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -360,8 +680,6 @@ function BankTrackerTool({ onBack }) {
   return (
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
-
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 6</span>
         <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>📋 Bank Statement Tracker</h2>
@@ -369,8 +687,6 @@ function BankTrackerTool({ onBack }) {
       <p style={{ color: '#888', fontSize: '13px', marginBottom: '24px' }}>
         Upload bank extraction Excel files (from Step 5B) → AI normalizes data → Month-wise tracker generated
       </p>
-
-      {/* How it works */}
       <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '10px', padding: '18px', marginBottom: '20px' }}>
         <p style={{ fontWeight: '700', color: '#1a3c6e', fontSize: '13px', margin: '0 0 12px' }}>📝 How it works:</p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
@@ -387,8 +703,6 @@ function BankTrackerTool({ onBack }) {
           ))}
         </div>
       </div>
-
-      {/* Upload area */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
           <span style={{ fontSize: '28px' }}>📁</span>
@@ -403,14 +717,11 @@ function BankTrackerTool({ onBack }) {
           <input type="file" multiple accept=".xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
         </label>
       </div>
-
       {allFiles.length === 0 && (
         <p style={{ color: '#aaa', fontSize: '12px', textAlign: 'center', marginBottom: '20px' }}>
           💡 You can upload a folder AND add individual files — duplicates are handled automatically
         </p>
       )}
-
-      {/* File checklist */}
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -448,21 +759,17 @@ function BankTrackerTool({ onBack }) {
           )}
         </div>
       )}
-
       {error && (
         <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>
           ❌ {error}
         </div>
       )}
-
       <button onClick={handleGenerate} disabled={loading || selectedFiles.length === 0}
         style={{ width: '100%', padding: '14px', background: loading || selectedFiles.length === 0 ? '#ccc' : '#0f2444', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: loading || selectedFiles.length === 0 ? 'not-allowed' : 'pointer', marginBottom: '20px' }}>
         {loading
           ? '⏳ Reading files & generating tracker... Please wait...'
           : `📋 Generate Tracker${selectedFiles.length > 0 ? ` (${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''})` : ''}`}
       </button>
-
-      {/* Result */}
       {result && (
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 16px' }}>✅ Tracker Generated!</p>
@@ -482,10 +789,9 @@ function BankTrackerTool({ onBack }) {
           </div>
           {result.totalGaps > 0 && (
             <div style={{ background: '#FFEBEE', border: '1px solid #ef5350', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#C62828', fontWeight: '600' }}>
-              ⚠️ {result.totalGaps} month{result.totalGaps !== 1 ? 's' : ''} marked <strong>?</strong> in the tracker — statements missing in the middle of the date range. These should be requested from the opposition.
+              ⚠️ {result.totalGaps} month{result.totalGaps !== 1 ? 's' : ''} marked <strong>?</strong> in the tracker — statements missing in the middle of the date range.
             </div>
           )}
-
           {result.errors && result.errors.length > 0 && (
             <div style={{ background: '#fff0f0', borderRadius: '8px', padding: '12px', marginBottom: '16px' }}>
               <p style={{ color: '#cc0000', fontWeight: '700', margin: '0 0 4px', fontSize: '13px' }}>⚠️ Failed files:</p>
@@ -494,7 +800,6 @@ function BankTrackerTool({ onBack }) {
               ))}
             </div>
           )}
-
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <button onClick={handleDownload}
               style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
@@ -1200,16 +1505,13 @@ function BankExtractTool({ onBack }) {
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
   const handleFileSelect = (e) => loadFiles(e.target.files);
-
   const toggleOne = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-
   const toggleAll = () => {
     const allChecked = allFiles.every(f => selected[f.name]);
     const sel = {};
     allFiles.forEach(f => sel[f.name] = !allChecked);
     setSelected(sel);
   };
-
   const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
