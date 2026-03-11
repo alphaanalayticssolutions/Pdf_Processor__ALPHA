@@ -1,3 +1,5 @@
+export const maxDuration = 300; // Vercel Pro — 300 second timeout
+
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({
@@ -40,6 +42,41 @@ function extractJSONArray(text) {
   return text.slice(start, end + 1);
 }
 
+async function processChunk(chunk, index) {
+  const message = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 8192,
+    system: SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: JSON.stringify(chunk),
+      },
+    ],
+  });
+
+  const text = message.content
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("");
+
+  const cleaned = text.replace(/```json|```/g, "").trim();
+  const jsonText = extractJSONArray(cleaned);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (err) {
+    console.error("JSON parse failed for chunk:", index + 1, jsonText.slice(0, 200));
+    throw new Error(`Claude returned invalid JSON for chunk ${index + 1}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Claude did not return an array for chunk ${index + 1}`);
+  }
+
+  return parsed;
+}
+
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -56,45 +93,25 @@ export async function POST(request) {
       );
     }
 
-    const chunks = chunkArray(descriptions, 50);
+    // 200 per chunk — fewer API calls, faster overall
+    const chunks = chunkArray(descriptions, 200);
+    console.log(`Total: ${descriptions.length} descriptions, ${chunks.length} chunks`);
+
+    // Process 5 chunks in parallel to stay within rate limits
+    const PARALLEL = 5;
     const allResults = [];
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunk.length} descriptions)`);
+    for (let i = 0; i < chunks.length; i += PARALLEL) {
+      const batch = chunks.slice(i, i + PARALLEL);
+      console.log(`Batch ${Math.floor(i / PARALLEL) + 1}/${Math.ceil(chunks.length / PARALLEL)}`);
 
-      const message = await client.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: JSON.stringify(chunk),
-          },
-        ],
-      });
+      const batchResults = await Promise.all(
+        batch.map((chunk, j) => processChunk(chunk, i + j))
+      );
 
-      const text = message.content
-        .map((b) => (b.type === "text" ? b.text : ""))
-        .join("");
-
-      const cleaned = text.replace(/```json|```/g, "").trim();
-      const jsonText = extractJSONArray(cleaned);
-
-      let parsed;
-      try {
-        parsed = JSON.parse(jsonText);
-      } catch (err) {
-        console.error("JSON parse failed for chunk:", i + 1, jsonText.slice(0, 200));
-        throw new Error(`Claude returned invalid JSON for chunk ${i + 1}`);
+      for (const result of batchResults) {
+        allResults.push(...result);
       }
-
-      if (!Array.isArray(parsed)) {
-        throw new Error(`Claude did not return an array for chunk ${i + 1}`);
-      }
-
-      allResults.push(...parsed);
     }
 
     return Response.json({
