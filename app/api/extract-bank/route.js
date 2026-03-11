@@ -68,28 +68,10 @@ LAYOUT: Handle any column order. Merge multi-line transactions into one row. Inf
 - Amounts in parentheses (123.45) = Debit
 - Negative amounts -123.45 = Debit
 
-CATEGORIZATION (case-insensitive keyword match):
-McDonald's/Pizza/Restaurant/Cafe/Burger/Subway/Domino's → Food
-Walmart/Kroger/Grocery/Costco/Aldi/Pick N Save/Piggly Wiggly → Grocery
-Shell/BP/Exxon/Mobil/Gas Station/Speedway → Gas
-ATT/Verizon/T-Mobile/Comcast/Utility/Electric/Water/We Energies → Utilities
-Amazon/Target/Kohl's/Macy's/eBay/Shopping → Shopping
-IRS/Tax → Tax
-SSA/Social Security/Government → Government Benefits
-Loan/Mortgage/Cardmember Services/AMEX/EPAYMENT → Loan Payment
-ATM/Cash Withdrawal → ATM Withdrawal
-Zelle/Venmo/PayPal/CashApp → Mobile Payment
-Transfer/Wire/ACH → Transfer
-Fee/Charge/Penalty/NSF/Overdraft → Fee
-Refund/Reversal/Adjustment/Return → Refund
-Check → Check Payment
-Deposit → Deposit
-(unmatched) → Other
-
 RUNNING BALANCE: Calculate cumulative balance after each transaction. Use statement's own balance column if available.
 
 OUTPUT — return ONLY this minified JSON:
-{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022","categorization":"Deposit"}]}
+{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022"}]}
 
 For statements with no transactions, return:
 {"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[]}
@@ -166,22 +148,31 @@ export async function POST(request) {
         }
 
         const transactions = (data.transactions || []).map(t => ({
-          file_name: file.name,
-          bank_name: data.bank_name || '',
-          account_holder: data.account_holder || '',
-          account_number: data.account_number || '',
+          file_name:        file.name,
+          bank_name:        data.bank_name || '',
+          account_holder:   data.account_holder || '',
+          account_number:   data.account_number || '',
           statement_period: data.statement_period || '',
-          ...t
+          date:             t.date || '',
+          description:      t.description || '',
+          check_number:     t.check_number || '',
+          debit:            t.debit || 0,
+          credit:           t.credit || 0,
+          balance:          t.balance ?? '',
+          running_balance:  t.running_balance ?? '',
+          month:            t.month || '',
+          type:             t.type || '',
+          year:             t.year || '',
         }));
 
         const summary = {
-          file: file.name,
-          bank: data.bank_name || '',
-          account_holder: data.account_holder || '',
-          account_number: data.account_number || '',
-          period: data.statement_period || '',
-          opening_balance: data.opening_balance || 0,
-          closing_balance: data.closing_balance || 0,
+          file:              file.name,
+          bank:              data.bank_name || '',
+          account_holder:    data.account_holder || '',
+          account_number:    data.account_number || '',
+          period:            data.statement_period || '',
+          opening_balance:   data.opening_balance || 0,
+          closing_balance:   data.closing_balance || 0,
           transaction_count: transactions.length,
         };
 
@@ -222,7 +213,7 @@ export async function POST(request) {
       outputFileName = names.join('_') + '.xlsx';
     }
 
-    // ── If ALL files failed (none were valid bank statements) ──
+    // ── If ALL files failed ──
     if (summaries.length === 0) {
       return Response.json(
         { error: 'No valid bank statements found.', details: errors },
@@ -230,7 +221,7 @@ export async function POST(request) {
       );
     }
 
-    // ── Build Excel (even if 0 transactions — summary sheet still has data) ──
+    // ── Build Excel ──
     const wb = new ExcelJS.Workbook();
 
     // Sheet 1: All Transactions
@@ -251,7 +242,6 @@ export async function POST(request) {
       { header: 'Running Balance',  key: 'running_balance',  width: 18 },
       { header: 'Type',             key: 'type',             width: 10 },
       { header: 'Year',             key: 'year',             width: 10 },
-      { header: 'Categorization',   key: 'categorization',   width: 20 },
     ];
 
     // Header row styling
@@ -263,9 +253,9 @@ export async function POST(request) {
 
     txSheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-    const yellow = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+    const yellow    = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
     const lightBlue = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0FE' } };
-    const white = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+    const white     = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
 
     allTransactions.forEach((t, idx) => {
       const debitVal  = t.debit  && t.debit  !== 0 ? t.debit  : null;
@@ -289,17 +279,14 @@ export async function POST(request) {
         running_balance:  runBal           ?? '',
         type:             t.type           || '',
         year:             t.year           || '',
-        categorization:   t.categorization || '',
       });
 
-      // Yellow highlight: missing description OR missing both debit and credit
-      const missingDesc = !descVal;
+      const missingDesc    = !descVal;
       const missingAmounts = !debitVal && !creditVal;
 
       if (missingDesc || missingAmounts) {
         row.eachCell({ includeEmpty: true }, cell => { cell.fill = yellow; });
       } else {
-        // Alternating row fill
         const fill = idx % 2 === 0 ? white : lightBlue;
         row.eachCell({ includeEmpty: true }, cell => { cell.fill = fill; });
       }
@@ -308,12 +295,12 @@ export async function POST(request) {
     // If no transactions, add a placeholder note row
     if (allTransactions.length === 0) {
       const noteRow = txSheet.addRow({
-        file_name: summaries[0]?.file || '',
-        bank_name: summaries[0]?.bank || '',
-        account_holder: summaries[0]?.account_holder || '',
-        account_number: summaries[0]?.account_number || '',
+        file_name:        summaries[0]?.file || '',
+        bank_name:        summaries[0]?.bank || '',
+        account_holder:   summaries[0]?.account_holder || '',
+        account_number:   summaries[0]?.account_number || '',
         statement_period: summaries[0]?.period || '',
-        description: 'No transactions this statement period',
+        description:      'No transactions this statement period',
       });
       noteRow.getCell('description').font = { italic: true, color: { argb: 'FF888888' } };
     }
