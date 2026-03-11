@@ -235,89 +235,46 @@ function DescriptionCategoriserTool({ onBack }) {
   const allChecked = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
   const someChecked = allFiles.some(f => selected[f.name]);
 
-  // Read Excel file in browser using SheetJS-style manual parsing
-  const readDescriptionsFromFile = (file) => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          // Parse binary Excel manually — extract all cell text values
-          const buffer = e.target.result;
-          const bytes = new Uint8Array(buffer);
-          // Convert to string to search for XML content (xlsx is a zip with XML)
-          const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-          // Extract shared strings and cell values via regex from XML
-          const sharedStrings = [];
-          const ssMatches = text.matchAll(/<si>.*?<\/si>/gs);
-          for (const m of ssMatches) {
-            const tMatches = [...m[0].matchAll(/<t[^>]*>(.*?)<\/t>/gs)];
-            sharedStrings.push(tMatches.map(t => t[1]).join(''));
-          }
-          // Get inline strings and shared string refs from sheet
-          const rows = [];
-          const rowMatches = text.matchAll(/<row[^>]*>(.*?)<\/row>/gs);
-          for (const row of rowMatches) {
-            const cells = [];
-            const cellMatches = row[1].matchAll(/<c[^>]*t="([^"]*)"[^>]*>.*?<v>(.*?)<\/v>.*?<\/c>|<c[^>]*>.*?<v>(.*?)<\/v>.*?<\/c>/gs);
-            for (const cell of cellMatches) {
-              if (cell[1] === 's') {
-                // shared string
-                const idx = parseInt(cell[2]);
-                cells.push(sharedStrings[idx] || '');
-              } else if (cell[1] === 'inlineStr') {
-                cells.push(cell[2] || '');
-              } else {
-                cells.push(cell[3] || cell[2] || '');
-              }
-            }
-            rows.push(cells);
-          }
-          resolve(rows);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsArrayBuffer(file);
-    });
-  };
-
   const handleCategorise = async () => {
     if (selectedFiles.length === 0) { setError('Please select at least one Excel file.'); return; }
     setLoading(true); setError(''); setResults([]); setDone(false);
 
     try {
-      // Collect all distinct descriptions across all selected files
+      // Step 1: Load SheetJS from CDN
+      setProgress('Loading Excel parser...');
+      const XLSX = await import('https://cdn.sheetjs.com/xlsx-0.20.3/package/xlsx.mjs');
+
       const allDescriptions = new Set();
 
+      // Step 2: Parse each selected file in the browser
       for (const file of selectedFiles) {
         setProgress(`Reading ${file.name}...`);
-        const formData = new FormData();
-        formData.append('file', file);
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: 'array' });
 
-        // Use our API to parse the Excel and get descriptions
-        const res = await fetch('/api/categorise-descriptions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ parseOnly: true, fileName: file.name }),
-        });
+        for (const sheetName of workbook.SheetNames) {
+          const sheet = workbook.Sheets[sheetName];
+          const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
-        // Since we can't easily parse xlsx in browser, send file to API
-        const fd = new FormData();
-        fd.append('file', file);
-        const parseRes = await fetch('/api/categorise-descriptions', {
-          method: 'POST',
-          body: fd,
-        });
-        const parseData = await parseRes.json();
-        if (!parseRes.ok) throw new Error(parseData.error || 'Failed to read file');
+          for (const row of rows) {
+            // Find Description column — case-insensitive
+            const key = Object.keys(row).find(k => k.trim().toLowerCase() === 'description');
+            if (key && row[key] && String(row[key]).trim() !== '') {
+              allDescriptions.add(String(row[key]).trim());
+            }
+          }
+        }
+      }
 
-        parseData.descriptions.forEach(d => allDescriptions.add(d));
+      if (allDescriptions.size === 0) {
+        throw new Error('No "Description" column found in the uploaded Excel file(s). Make sure the column header is exactly "Description".');
       }
 
       const descArray = [...allDescriptions];
-      setProgress(`Categorising ${descArray.length} distinct descriptions with AI...`);
+      const totalChunks = Math.ceil(descArray.length / 50);
+      setProgress(`Categorising ${descArray.length} distinct descriptions with AI (${totalChunks} batches)...`);
 
+      // Step 3: Send descriptions array to API
       const res = await fetch('/api/categorise-descriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -325,7 +282,7 @@ function DescriptionCategoriserTool({ onBack }) {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Categorisation failed');
+      if (!res.ok || !data.success) throw new Error(data.error || 'Categorisation failed');
 
       setResults(data.results);
       setDone(true);
@@ -338,13 +295,15 @@ function DescriptionCategoriserTool({ onBack }) {
   };
 
   const downloadExcel = () => {
-    // Build CSV as fallback (API returns excel via route)
+    // Build CSV for download
     const rows = [['Description', 'Category'], ...results.map(r => [r.description, r.category])];
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'categorised_descriptions.csv'; a.click();
+    a.href = url;
+    a.download = 'categorised_descriptions.csv';
+    a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -352,24 +311,22 @@ function DescriptionCategoriserTool({ onBack }) {
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
 
-      {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 7</span>
         <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>🏷️ Description Categoriser</h2>
       </div>
       <p style={{ color: '#888', fontSize: '13px', marginBottom: '24px' }}>
-        Upload Excel files with distinct descriptions → AI categorises each one → Download Excel with Description + Category
+        Upload Excel files with a <strong>Description</strong> column → AI categorises each distinct value → Download CSV
       </p>
 
-      {/* How it works */}
       <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '10px', padding: '16px', marginBottom: '20px' }}>
         <p style={{ fontWeight: '700', color: '#1a3c6e', fontSize: '13px', margin: '0 0 10px' }}>📝 How it works:</p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
           {[
-            { n: '1', t: 'Upload folder or pick individual Excel files with a Description column' },
-            { n: '2', t: 'AI normalises merchant names — same brand always gets same category' },
-            { n: '3', t: 'Categories: Food, Grocery, Gas, Utilities, Shopping, Tax, Travel & more' },
-            { n: '4', t: 'Download Excel — 2 columns: Description + Category' },
+            { n: '1', t: 'Upload Excel file(s) with a "Description" column (e.g. Step 5B output)' },
+            { n: '2', t: 'Browser extracts all distinct description values — no duplicates sent' },
+            { n: '3', t: 'AI assigns each description a category: Food, Gas, Utilities, Travel & more' },
+            { n: '4', t: 'Download CSV — 2 columns: Description + Category' },
           ].map(s => (
             <div key={s.n} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
               <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>{s.n}</span>
@@ -379,7 +336,6 @@ function DescriptionCategoriserTool({ onBack }) {
         </div>
       </div>
 
-      {/* Upload area */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
           <span style={{ fontSize: '28px' }}>📁</span>
@@ -397,11 +353,10 @@ function DescriptionCategoriserTool({ onBack }) {
 
       {allFiles.length === 0 && (
         <p style={{ color: '#aaa', fontSize: '12px', textAlign: 'center', marginBottom: '20px' }}>
-          💡 Excel must have a <strong>Description</strong> column with distinct values
+          💡 Excel must have a <strong>Description</strong> column (Step 5B output works directly)
         </p>
       )}
 
-      {/* File checklist */}
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -453,7 +408,6 @@ function DescriptionCategoriserTool({ onBack }) {
           : `🏷️ Categorise${selectedFiles.length > 0 ? ` (${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''})` : ''}`}
       </button>
 
-      {/* Results */}
       {done && results.length > 0 && (
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -462,11 +416,10 @@ function DescriptionCategoriserTool({ onBack }) {
             </p>
             <button onClick={downloadExcel}
               style={{ padding: '10px 20px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
-              ⬇ Download Excel
+              ⬇ Download CSV
             </button>
           </div>
 
-          {/* Preview table */}
           <div style={{ border: '1px solid #86efac', borderRadius: '8px', overflow: 'hidden', maxHeight: '320px', overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0 }}>
@@ -491,11 +444,6 @@ function DescriptionCategoriserTool({ onBack }) {
               </tbody>
             </table>
           </div>
-          {results.length > 50 && (
-            <p style={{ color: '#888', fontSize: '11px', textAlign: 'center', marginTop: '8px' }}>
-              Showing all {results.length} rows — download Excel for full data
-            </p>
-          )}
 
           <button onClick={clearAll}
             style={{ width: '100%', marginTop: '14px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>

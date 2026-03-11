@@ -9,15 +9,19 @@ const SYSTEM_PROMPT = `You are a financial transaction categorizer.
 INPUT: A JSON array of distinct transaction descriptions.
 
 OUTPUT RULES:
-Return ONLY valid JSON.
-Do not include markdown.
-Do not include explanation.
+- Return ONLY a valid JSON array. No markdown, no explanation, no preamble.
+- Every input description must appear in the output exactly as given.
+- Assign one category per description from this list ONLY:
+  Food & Dining, Groceries, Gas & Fuel, Utilities, Shopping, Travel, Healthcare,
+  Insurance, Rent & Mortgage, Loan Payment, Tax Payment, Payroll & Income,
+  Bank Transfer, ATM Withdrawal, Check, Investment, Legal & Professional,
+  Subscription & Membership, Auto & Transport, Entertainment, Charity & Donations,
+  Government & Fees, Other
 
 Format:
 [
- {"description":"original description","category":"category name"}
-]
-`;
+  {"description":"original description","category":"category name"}
+]`;
 
 function chunkArray(arr, size) {
   const chunks = [];
@@ -41,7 +45,11 @@ export async function POST(request) {
     const body = await request.json();
     const { descriptions } = body;
 
-    if (!descriptions || !Array.isArray(descriptions) || descriptions.length === 0) {
+    if (
+      !descriptions ||
+      !Array.isArray(descriptions) ||
+      descriptions.length === 0
+    ) {
       return Response.json(
         { error: "descriptions must be a non-empty array" },
         { status: 400 }
@@ -51,9 +59,12 @@ export async function POST(request) {
     const chunks = chunkArray(descriptions, 50);
     const allResults = [];
 
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      console.log(`Processing chunk ${i + 1}/${chunks.length} (${chunk.length} descriptions)`);
+
       const message = await client.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 4096,
         system: SYSTEM_PROMPT,
         messages: [
@@ -68,23 +79,19 @@ export async function POST(request) {
         .map((b) => (b.type === "text" ? b.text : ""))
         .join("");
 
-      // remove markdown
       const cleaned = text.replace(/```json|```/g, "").trim();
-
-      // extract only JSON array
       const jsonText = extractJSONArray(cleaned);
 
       let parsed;
-
       try {
         parsed = JSON.parse(jsonText);
       } catch (err) {
-        console.log("JSON parse failed:", jsonText);
-        throw new Error("Claude returned invalid JSON");
+        console.error("JSON parse failed for chunk:", i + 1, jsonText.slice(0, 200));
+        throw new Error(`Claude returned invalid JSON for chunk ${i + 1}`);
       }
 
       if (!Array.isArray(parsed)) {
-        throw new Error("Claude did not return an array");
+        throw new Error(`Claude did not return an array for chunk ${i + 1}`);
       }
 
       allResults.push(...parsed);
@@ -96,13 +103,9 @@ export async function POST(request) {
       results: allResults,
     });
   } catch (err) {
-    console.log("Categorise descriptions error:", err.message);
-
+    console.error("Categorise descriptions error:", err.message);
     return Response.json(
-      {
-        success: false,
-        error: err.message,
-      },
+      { success: false, error: err.message },
       { status: 500 }
     );
   }
