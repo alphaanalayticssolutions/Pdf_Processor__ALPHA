@@ -12,7 +12,6 @@ const MONTH_NAMES = {
   jan:0, feb:1, mar:2, apr:3, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
 };
 
-// ─── Parse statement period → Set of "MMM YYYY" ────────────────────────────
 function parsePeriodToMonths(periodStr) {
   const months = new Set();
   if (!periodStr || periodStr === 'None' || periodStr === 'null') return months;
@@ -54,7 +53,9 @@ function parsePeriodToMonths(periodStr) {
 
   const [startM, startY] = found[0];
   const [endM, endY] = found[found.length - 1];
-  const rangeSize = (endY * 12 + endM) - (startY * 12 + startM);
+  const startTotal = startY * 12 + startM;
+  const endTotal   = endY * 12 + endM;
+  const rangeSize  = endTotal - startTotal;
 
   if (rangeSize < 0 || rangeSize > 12) {
     for (const [mi, yr] of found) months.add(`${MONTH_ORDER[mi]} ${yr}`);
@@ -70,26 +71,27 @@ function parsePeriodToMonths(periodStr) {
   return months;
 }
 
-// ─── Canonical institution — banks + card issuers ─────────────────────────
-function canonicalInstitution(name) {
-  const b = (name || '').trim().toLowerCase();
+// ─── CHANGE 1: canonicalBank now also handles card issuers ────────────────
+function canonicalBank(bankName) {
+  const b = (bankName || '').trim().toLowerCase();
+  // Banks
   if (b.includes('countryside'))                              return 'Countryside Bank';
   if (b.includes('hinsdale'))                                return 'Hinsdale Bank & Trust';
   if (b.includes('chase') || b.includes('jpmorgan'))         return 'Chase';
   if (b.includes('bank of america') || b.includes('bofa'))   return 'Bank of America';
   if (b.includes('wells fargo'))                             return 'Wells Fargo';
   if (b.includes('us bank') || b.includes('usbank'))         return 'US Bank';
+  // Card issuers — NEW
   if (b.includes('amex') || b.includes('american express'))  return 'American Express';
   if (b.includes('citi') || b.includes('citibank'))          return 'Citi';
   if (b.includes('discover'))                                return 'Discover';
   if (b.includes('capital one') || b.includes('capitalone')) return 'Capital One';
   if (b.includes('synchrony'))                               return 'Synchrony';
   if (b.includes('barclays') || b.includes('barclaycard'))   return 'Barclays';
-  return (name || 'Unknown').trim();
+  return (bankName || 'Unknown').trim();
 }
 
-// ─── STEP 1: Read raw rows — file-level bank vs credit card detection ──────
-// One Excel file = one type only (bank OR credit card, never mixed)
+// ─── CHANGE 2: readExcelRows now reads card headers too ───────────────────
 async function readExcelRows(arrayBuffer) {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(arrayBuffer);
@@ -99,12 +101,10 @@ async function readExcelRows(arrayBuffer) {
   if (!sheet) throw new Error('No worksheet found in Excel file');
 
   const KNOWN_HEADERS = [
-    // Bank headers
-    'BANK NAME', 'BANK', 'ACCOUNT NUMBER', 'ACCOUNT NO', 'ACCOUNT#', 'ACCOUNT HOLDER',
-    // Credit card headers
+    'MONTH', 'YEAR', 'BANK NAME', 'BANK', 'ACCOUNT NUMBER', 'ACCOUNT NO', 'ACCOUNT HOLDER',
+    'DATE', 'DESCRIPTION', 'DEBIT', 'CREDIT', 'STATEMENT PERIOD',
+    // NEW — credit card headers
     'CARD ISSUER', 'ISSUER', 'CARD NUMBER', 'CARD NO', 'CARD#', 'CARD HOLDER', 'CARDHOLDER',
-    // Shared
-    'STATEMENT PERIOD', 'PERIOD', 'MONTH', 'YEAR',
   ];
 
   let headerRowNumber = null;
@@ -130,17 +130,17 @@ async function readExcelRows(arrayBuffer) {
   });
 
   if (!headerMap || bestScore === 0) {
-    throw new Error('Could not find header row. Expected columns like Bank Name / Card Issuer, Account Number / Card Number, Statement Period.');
+    throw new Error('Could not find header row. Make sure the Excel has columns like Bank Name / Card Issuer, Account Number / Card Number, Account Holder.');
   }
 
-  // ── Detect file type ONCE from headers ──
-  // Credit card file: has card-specific headers but no bank headers
+  // NEW — detect file type once, apply to all rows
   const hasBankHeaders = !!(headerMap['BANK NAME'] || headerMap['BANK']);
   const hasCardHeaders = !!(headerMap['CARD ISSUER'] || headerMap['ISSUER'] || headerMap['CARD NUMBER'] || headerMap['CARD NO']);
   const fileType = (hasCardHeaders && !hasBankHeaders) ? 'credit_card' : 'bank';
 
-  console.log(`Header at row ${headerRowNumber}, fileType=${fileType}:`, Object.keys(headerMap));
+  console.log(`Header found at row ${headerRowNumber}, fileType=${fileType}:`, Object.keys(headerMap));
 
+  const rawRows = [];
   const get = (row, keys) => {
     for (const key of keys) {
       const col = headerMap[key];
@@ -152,60 +152,57 @@ async function readExcelRows(arrayBuffer) {
     return null;
   };
 
-  const rawRows = [];
-
   sheet.eachRow((row, rowNumber) => {
     if (rowNumber <= headerRowNumber) return;
 
-    let institution, accountNumber, holder;
+    let bank, account, holder;
 
+    // NEW — read from correct columns based on file type
     if (fileType === 'credit_card') {
-      // Credit card file — prefer card headers
-      institution   = get(row, ['CARD ISSUER', 'ISSUER', 'BANK NAME', 'BANK']);
-      accountNumber = get(row, ['CARD NUMBER', 'CARD NO', 'CARD#', 'ACCOUNT NUMBER', 'ACCOUNT NO']);
-      holder        = get(row, ['CARD HOLDER', 'CARDHOLDER', 'ACCOUNT HOLDER']);
+      bank    = get(row, ['CARD ISSUER', 'ISSUER']);
+      account = get(row, ['CARD NUMBER', 'CARD NO', 'CARD#']);
+      holder  = get(row, ['CARD HOLDER', 'CARDHOLDER']);
     } else {
-      // Bank file — prefer bank headers
-      institution   = get(row, ['BANK NAME', 'BANK', 'CARD ISSUER', 'ISSUER']);
-      accountNumber = get(row, ['ACCOUNT NUMBER', 'ACCOUNT NO', 'ACCOUNT#', 'CARD NUMBER', 'CARD NO']);
-      holder        = get(row, ['ACCOUNT HOLDER', 'CARD HOLDER', 'CARDHOLDER']);
+      bank    = get(row, ['BANK NAME', 'BANK']);
+      account = get(row, ['ACCOUNT NUMBER', 'ACCOUNT NO', 'ACCOUNT#']);
+      holder  = get(row, ['ACCOUNT HOLDER', 'HOLDER', 'ACCOUNT HOLDER NAME']);
     }
 
-    const period = get(row, ['STATEMENT PERIOD', 'PERIOD']);
+    const period = get(row, ['STATEMENT PERIOD']);
+    const month  = get(row, ['MONTH']);
+    const year   = get(row, ['YEAR']);
 
-    if (!accountNumber && !institution) return;
-
-    // Every row in this file gets the same fileType
-    rawRows.push({ type: fileType, institution, accountNumber, holder, period });
+    if (!account && !bank) return;
+    rawRows.push({ bank, account, holder, period, month, year });
   });
 
-  console.log(`readExcelRows: ${rawRows.length} rows, type=${fileType}`);
+  console.log(`readExcelRows: headerRow=${headerRowNumber}, dataRows=${rawRows.length}`);
   return rawRows;
 }
 
-// ─── STEP 2A: Group rows by accountNumber + institution + type ─────────────
-function groupRows(rawRows) {
+// ─── groupRowsByAccount — exactly same as original ────────────────────────
+function groupRowsByAccount(rawRows) {
   const groups = {};
   const insertionOrder = [];
+  const MO_LIST = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
   for (const r of rawRows) {
-    if (!r.accountNumber && !r.institution) continue;
-    const instKey = canonicalInstitution(r.institution);
-    const key = `${r.type}__${r.accountNumber || 'Unknown'}__${instKey}`;
+    if (!r.account) continue;
+    const bankKey = canonicalBank(r.bank);
+    const acctKey = `${r.account}__${bankKey}`;
 
-    if (!groups[key]) {
-      groups[key] = {
-        type: r.type,
-        accountNumber: r.accountNumber || 'Unknown',
-        institution: instKey,
+    if (!groups[acctKey]) {
+      groups[acctKey] = {
+        account: r.account,
+        bank: bankKey,
         holder: 'Unknown',
         monthSet: new Set(),
         periodsSeen: new Set(),
       };
-      insertionOrder.push(key);
+      insertionOrder.push(acctKey);
     }
 
-    const g = groups[key];
+    const g = groups[acctKey];
     if (r.holder && g.holder === 'Unknown') g.holder = r.holder;
 
     if (r.period && !g.periodsSeen.has(r.period)) {
@@ -214,51 +211,59 @@ function groupRows(rawRows) {
     }
   }
 
+  const firstMonth = (g) => {
+    const ms = Array.from(g.monthSet);
+    if (!ms.length) return '9999-99';
+    return ms.map(m => {
+      const parts = m.split(' ');
+      return `${parts[1]}-${String(MO_LIST.indexOf(parts[0])+1).padStart(2,'0')}`;
+    }).sort()[0];
+  };
+
+  insertionOrder.sort((a, b) => {
+    const ga = groups[a], gb = groups[b];
+    if (ga.account !== gb.account) return ga.account.localeCompare(gb.account);
+    return firstMonth(ga).localeCompare(firstMonth(gb));
+  });
+
   return insertionOrder.map(key => {
     const g = groups[key];
-    return {
-      type: g.type,
-      rawAccount: g.accountNumber,
-      rawInstitution: g.institution,
-      holder: g.holder,
-      months: Array.from(g.monthSet),
-    };
+    return { rawAccount: g.account, rawBank: g.bank, holder: g.holder, months: Array.from(g.monthSet) };
   });
 }
 
-// ─── STEP 2B: AI normalizes holder + institution ───────────────────────────
+// ─── CHANGE 3: AI prompt now handles both bank + card issuer normalization ─
 async function normalizeWithAI(rawRows, fileName) {
-  const groups = groupRows(rawRows);
-  console.log(`groupRows: ${groups.length} entries in ${fileName}`);
-  if (groups.length === 0) return [];
+  const accountGroups = groupRowsByAccount(rawRows);
+  console.log(`groupRowsByAccount: ${accountGroups.length} accounts in ${fileName}`);
+  if (accountGroups.length === 0) return [];
 
-  const payload = groups.map((g, i) => ({
+  const namePayload = accountGroups.map((g, i) => ({
     idx: i,
-    type: g.type,
     rawAccount: g.rawAccount,
-    rawInstitution: g.rawInstitution,
+    rawBank: g.rawBank,
     holder: g.holder,
   }));
 
   try {
-    const prompt = `You are given a list of financial accounts. Each entry is either a bank account (type="bank") or a credit card (type="credit_card").
-Normalize the account/card number, holder name, and institution name.
+    const prompt = `You are given a list of financial accounts — could be bank accounts or credit cards.
+Normalize the account/card number, holder name, and bank/issuer name.
 Return ONLY a valid JSON array, nothing else. No markdown, no explanation.
 
-Return format (same order, same idx):
-[{ "idx": 0, "type": "bank", "accountNumber": "****3000", "holder": "2034 Superior LLC", "institution": "Countryside Bank" }]
+Return format (one entry per input, same order, same idx):
+[{ "idx": 0, "accountNumber": "****3000", "accountHolder": "2034 Superior LLC", "bankName": "Countryside Bank" }]
 
 Rules:
-- accountNumber: last 4 digits only, with **** prefix. "5-13009" → "****3009", "XXXX3000" → "****3000", "3000" → "****3000". Strip all non-digit chars first, then take last 4.
-- holder: Title Case. Fix typos. "2034 SUPERIOR LLC" → "2034 Superior LLC", "RDLD BUILD LLC" → "RDLD Build LLC"
-- institution:
-    - type=bank: official bank name. "HINSDALE BK" → "Hinsdale Bank & Trust", "COUNTRYSIDE" → "Countryside Bank". Keep Countryside and Hinsdale SEPARATE — do NOT merge them.
-    - type=credit_card: official card issuer. "AMEX" → "American Express", "CITI" → "Citi", "CHASE CC" → "Chase"
-- type: copy exactly as given, do NOT change
-- Return exactly ${payload.length} entries, same order, do NOT merge or drop any
+- accountNumber: last 4 digits with **** prefix. Strip all non-digit chars first. "5-13009" → "****3009", "XXXX3000" → "****3000", "3000" → "****3000"
+- accountHolder: Title Case. Fix typos. "2034 SUPERIOR LLC" → "2034 Superior LLC", "RDLD BUILD LLC" → "RDLD Build LLC"
+- bankName: clean official name.
+    - Banks: "HINSDALE BK" → "Hinsdale Bank & Trust", "COUNTRYSIDE" → "Countryside Bank". Keep Countryside and Hinsdale SEPARATE — do NOT merge them.
+    - Card issuers: "AMEX" → "American Express", "CITI" → "Citi", "CHASE CC" → "Chase"
+    - If already clean, copy exactly as given — do NOT change or invent
+- Return exactly ${namePayload.length} entries, same order, DO NOT merge or drop any
 - Missing field → "Unknown"
 
-Input: ${JSON.stringify(payload)}`;
+Input: ${JSON.stringify(namePayload)}`;
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
@@ -271,29 +276,24 @@ Input: ${JSON.stringify(payload)}`;
     const normalized = JSON.parse(clean);
 
     return normalized.map(n => ({
-      type: n.type,
       accountNumber: n.accountNumber,
-      holder: n.holder,
-      institution: n.institution,
-      months: groups[n.idx]?.months || [],
+      accountHolder: n.accountHolder,
+      bankName: n.bankName,
+      months: accountGroups[n.idx]?.months || [],
     }));
 
   } catch (err) {
     console.log('AI normalization failed for', fileName, ':', err.message);
-    // Pure JS fallback — no AI needed
-    return groups.map(g => ({
-      type: g.type,
-      accountNumber: g.rawAccount
-        ? `****${String(g.rawAccount).replace(/\D/g, '').slice(-4)}`
-        : 'Unknown',
-      holder: g.holder || 'Unknown',
-      institution: canonicalInstitution(g.rawInstitution),
+    return accountGroups.map(g => ({
+      accountNumber: g.rawAccount ? `****${String(g.rawAccount).replace(/\D/g, '').slice(-4)}` : 'Unknown',
+      accountHolder: g.holder || 'Unknown',
+      bankName: g.rawBank || 'Unknown',
       months: g.months,
     }));
   }
 }
 
-// ─── Helper: fill every month between first and last ──────────────────────
+// ─── getFullRange — exactly same as original ──────────────────────────────
 function getFullRange(monthSet) {
   if (monthSet.size === 0) return [];
   const sorted = Array.from(monthSet).sort((a, b) => {
@@ -303,7 +303,7 @@ function getFullRange(monthSet) {
     return MONTH_ORDER.indexOf(ma) - MONTH_ORDER.indexOf(mb);
   });
   const [firstM, firstY] = sorted[0].split(' ');
-  const [lastM, lastY]   = sorted[sorted.length - 1].split(' ');
+  const [lastM, lastY] = sorted[sorted.length - 1].split(' ');
   const range = [];
   let curM = MONTH_ORDER.indexOf(firstM), curY = parseInt(firstY);
   const endM = MONTH_ORDER.indexOf(lastM), endY = parseInt(lastY);
@@ -315,7 +315,7 @@ function getFullRange(monthSet) {
   return range;
 }
 
-// ─── MAIN POST HANDLER ────────────────────────────────────────────────────
+// ─── MAIN POST HANDLER — exactly same as original ─────────────────────────
 export async function POST(request) {
   try {
     const formData = await request.formData();
@@ -324,47 +324,45 @@ export async function POST(request) {
       f => (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')) && f.size > 0
     );
 
-    console.log('Tracker - files received:', excelFiles.length);
+    console.log('Tracker - Excel files received:', excelFiles.length);
     if (excelFiles.length === 0) {
       return Response.json({ error: 'No Excel files found!' }, { status: 400 });
     }
 
-    // entryMap keyed by type + accountNumber + institution
-    const entryMap = {};
-    const entryMapOrder = [];
+    const accountMap = {};
+    const accountMapOrder = [];
     const errors = [];
 
     await Promise.all(
       excelFiles.map(async (file) => {
         try {
           const arrayBuffer = await file.arrayBuffer();
-          console.log('Reading:', file.name);
+          console.log('Reading Excel:', file.name);
           const rawRows = await readExcelRows(arrayBuffer);
 
           if (rawRows.length === 0) {
-            errors.push({ file: file.name, error: 'No data rows found' });
+            errors.push({ file: file.name, error: 'No data rows found in Excel' });
             return;
           }
 
-          const entries = await normalizeWithAI(rawRows, file.name);
-          console.log('Entries from', file.name, ':', entries.length);
+          const accounts = await normalizeWithAI(rawRows, file.name);
+          console.log('Accounts from', file.name, ':', accounts.length);
 
-          for (const info of entries) {
-            const key = `${info.type}__${info.accountNumber}__${info.institution}`;
+          for (const info of accounts) {
+            const key = `${info.accountNumber}__${info.bankName}`;
 
-            if (!entryMap[key]) {
-              entryMap[key] = {
-                type: info.type,
-                accountNumber: info.accountNumber,
-                holder: info.holder,
-                institution: info.institution,
+            if (!accountMap[key]) {
+              accountMap[key] = {
+                account: info.accountNumber,
+                holder: info.accountHolder,
+                bank: info.bankName,
                 files: new Set(),
                 months: new Set(),
               };
-              entryMapOrder.push(key);
+              accountMapOrder.push(key);
             }
-            entryMap[key].files.add(file.name);
-            info.months.forEach(m => entryMap[key].months.add(m));
+            accountMap[key].files.add(file.name);
+            info.months.forEach(m => accountMap[key].months.add(m));
           }
 
         } catch (err) {
@@ -374,13 +372,12 @@ export async function POST(request) {
       })
     );
 
-    if (Object.keys(entryMap).length === 0) {
-      return Response.json({ error: 'No accounts/cards could be extracted.' }, { status: 400 });
+    if (Object.keys(accountMap).length === 0) {
+      return Response.json({ error: 'No accounts could be extracted from Excel files.' }, { status: 400 });
     }
 
-    // ─── Build complete timeline ─────────────────────────────────────────
     const allMonthSet = new Set();
-    Object.values(entryMap).forEach(v => {
+    Object.values(accountMap).forEach(v => {
       v.months.forEach(m => allMonthSet.add(m));
       getFullRange(v.months).forEach(m => allMonthSet.add(m));
     });
@@ -399,15 +396,14 @@ export async function POST(request) {
       yearGroups[yr].push(m);
     });
 
-    // ─── Build output Excel ──────────────────────────────────────────────
+    // ─── Build output Excel — exactly same as original ───────────────────
     const wb = new ExcelJS.Workbook();
     const tracker = wb.addWorksheet('Tracker');
-
-    const fixedCols = ['Sno', 'Type', 'Account / Card No.', 'Holder', 'Institution', 'File Name'];
+    const fixedCols = ['Sno', 'Account Number', 'Account Holder', 'Bank', 'File Name'];
     const thinWhite = { style: 'thin', color: { argb: 'FFffffff' } };
     const thinGray  = { style: 'thin', color: { argb: 'FFcccccc' } };
 
-    // ── Row 1: Year headers ──
+    // Row 1: Year headers
     const yearRow = tracker.addRow([]);
     fixedCols.forEach((_, i) => {
       const cell = yearRow.getCell(i + 1);
@@ -427,7 +423,7 @@ export async function POST(request) {
       colOffset += months.length;
     });
 
-    // ── Row 2: Column headers ──
+    // Row 2: Column headers
     const headerRow = tracker.addRow([]);
     fixedCols.forEach((h, i) => {
       const cell = headerRow.getCell(i + 1);
@@ -446,45 +442,40 @@ export async function POST(request) {
       cell.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
     });
 
-    // ── Data rows — bank first, then credit card; within each by account ──
-    const sortedKeys = entryMapOrder.slice().sort((a, b) => {
-      const ia = entryMap[a], ib = entryMap[b];
-      // Banks before credit cards
-      if (ia.type !== ib.type) return ia.type === 'bank' ? -1 : 1;
-      if (ia.accountNumber !== ib.accountNumber) return ia.accountNumber.localeCompare(ib.accountNumber);
+    // Data rows
+    const sortedAccountKeys = accountMapOrder.slice().sort((a, b) => {
+      const ia = accountMap[a], ib = accountMap[b];
+      if (ia.account !== ib.account) return ia.account.localeCompare(ib.account);
       const earliest = (info) => {
         const ms = Array.from(info.months);
         if (!ms.length) return '9999-99';
         return ms.map(m => {
           const [mo, yr] = m.split(' ');
-          return `${yr}-${String(MONTH_ORDER.indexOf(mo) + 1).padStart(2, '0')}`;
+          return `${yr}-${String(MONTH_ORDER.indexOf(mo)+1).padStart(2,'0')}`;
         }).sort()[0];
       };
       return earliest(ia).localeCompare(earliest(ib));
     });
 
-    sortedKeys.forEach((key, idx) => {
-      const info = entryMap[key];
+    sortedAccountKeys.forEach((key, idx) => {
+      const info = accountMap[key];
       const isEven = idx % 2 === 0;
       const rowBg = isEven ? 'FFDCE6F1' : 'FFFFFFFF';
 
       const fullRange = getFullRange(info.months);
       const gapSet = new Set(fullRange.filter(m => !info.months.has(m)));
 
-      const typeLabel = info.type === 'credit_card' ? 'Credit Card' : 'Bank';
-
       const rowData = [
         idx + 1,
-        typeLabel,
-        info.accountNumber,
+        info.account,
         info.holder,
-        info.institution,
+        info.bank,
         Array.from(info.files).join(', '),
       ];
       sortedMonths.forEach(m => {
-        if (info.months.has(m))  rowData.push('✓');
-        else if (gapSet.has(m))  rowData.push('?');
-        else                     rowData.push('');
+        if (info.months.has(m)) rowData.push('✓');
+        else if (gapSet.has(m)) rowData.push('?');
+        else rowData.push('');
       });
 
       const row = tracker.addRow(rowData);
@@ -496,14 +487,6 @@ export async function POST(request) {
         cell.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
         cell.alignment = { vertical: 'middle' };
       });
-
-      // Type cell — navy for Bank, purple for Credit Card
-      const typeCell = row.getCell(2);
-      typeCell.font = {
-        bold: true,
-        color: { argb: info.type === 'credit_card' ? 'FF6A0DAD' : 'FF002060' },
-      };
-      typeCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
       sortedMonths.forEach((m, i) => {
         const cell = row.getCell(fixedCols.length + 1 + i);
@@ -525,63 +508,58 @@ export async function POST(request) {
       });
     });
 
-    // ── Column widths & freeze ──
-    tracker.getColumn(1).width = 6;   // Sno
-    tracker.getColumn(2).width = 13;  // Type
-    tracker.getColumn(3).width = 18;  // Account/Card No
-    tracker.getColumn(4).width = 26;  // Holder
-    tracker.getColumn(5).width = 24;  // Institution
-    tracker.getColumn(6).width = 38;  // File Name
+    tracker.getColumn(1).width = 6;
+    tracker.getColumn(2).width = 18;
+    tracker.getColumn(3).width = 24;
+    tracker.getColumn(4).width = 24;
+    tracker.getColumn(5).width = 38;
     for (let i = fixedCols.length + 1; i <= fixedCols.length + sortedMonths.length; i++) {
       tracker.getColumn(i).width = 7;
     }
-    tracker.views = [{ state: 'frozen', xSplit: 6, ySplit: 2 }];
+    tracker.views = [{ state: 'frozen', xSplit: 5, ySplit: 2 }];
 
-    // ── Legend ──
     tracker.addRow([]);
     const legendRow = tracker.addRow([]);
     legendRow.height = 20;
 
-    legendRow.getCell(2).value = 'LEGEND:';
-    legendRow.getCell(2).font = { bold: true, size: 10 };
+    const l1 = legendRow.getCell(2);
+    l1.value = 'LEGEND:';
+    l1.font = { bold: true, size: 10 };
 
-    const lCheck = legendRow.getCell(3);
-    lCheck.value = '✓';
-    lCheck.font = { bold: true, color: { argb: 'FF1B5E20' }, size: 11 };
-    lCheck.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
-    lCheck.alignment = { horizontal: 'center', vertical: 'middle' };
-    lCheck.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
+    const l2 = legendRow.getCell(3);
+    l2.value = '✓';
+    l2.font = { bold: true, color: { argb: 'FF1B5E20' }, size: 11 };
+    l2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F5E9' } };
+    l2.alignment = { horizontal: 'center', vertical: 'middle' };
+    l2.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
 
-    legendRow.getCell(4).value = '= Statement present';
-    legendRow.getCell(4).font = { size: 10, color: { argb: 'FF1B5E20' } };
+    const l3 = legendRow.getCell(4);
+    l3.value = '= Statement present';
+    l3.font = { size: 10, color: { argb: 'FF1B5E20' } };
 
-    const lQ = legendRow.getCell(5);
-    lQ.value = '?';
-    lQ.font = { bold: true, color: { argb: 'FFC62828' }, size: 11 };
-    lQ.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } };
-    lQ.alignment = { horizontal: 'center', vertical: 'middle' };
-    lQ.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
+    const l4 = legendRow.getCell(5);
+    l4.value = '?';
+    l4.font = { bold: true, color: { argb: 'FFC62828' }, size: 11 };
+    l4.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEBEE' } };
+    l4.alignment = { horizontal: 'center', vertical: 'middle' };
+    l4.border = { top: thinGray, left: thinGray, bottom: thinGray, right: thinGray };
 
-    legendRow.getCell(6).value = '= MISSING — request from opposition';
-    legendRow.getCell(6).font = { bold: true, size: 10, color: { argb: 'FFC62828' } };
+    const l5 = legendRow.getCell(6);
+    l5.value = '= MISSING — request from opposition';
+    l5.font = { bold: true, size: 10, color: { argb: 'FFC62828' } };
 
     const excelBuffer = await wb.xlsx.writeBuffer();
     const excelBase64 = Buffer.from(excelBuffer).toString('base64');
 
-    // Count gaps + split totals by type
     let totalGaps = 0;
-    Object.values(entryMap).forEach(info => {
-      totalGaps += getFullRange(info.months).filter(m => !info.months.has(m)).length;
+    Object.values(accountMap).forEach(info => {
+      const fullRange = getFullRange(info.months);
+      totalGaps += fullRange.filter(m => !info.months.has(m)).length;
     });
-
-    const totalBankAccounts = Object.values(entryMap).filter(v => v.type === 'bank').length;
-    const totalCreditCards  = Object.values(entryMap).filter(v => v.type === 'credit_card').length;
 
     return Response.json({
       success: true,
-      totalAccounts: Object.keys(entryMap).length,
-      totalBankAccounts,
-      totalCreditCards,
+      totalAccounts: Object.keys(accountMap).length,
       totalMonths: sortedMonths.length,
       totalGaps,
       errors,
