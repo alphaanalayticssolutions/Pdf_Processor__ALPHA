@@ -307,36 +307,63 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal) {
 export async function POST(req) {
   try {
     const formData = await req.formData();
-    const file = formData.get('file');
-    if (!file) return NextResponse.json({ error: 'No file uploaded.' }, { status: 400 });
+    // Accept multiple files (field name: 'files') — merge all rows before pivot
+    const uploadedFiles = formData.getAll('files');
+    if (!uploadedFiles || uploadedFiles.length === 0) {
+      return NextResponse.json({ error: 'No file uploaded.' }, { status: 400 });
+    }
 
-    const fileName = file.name.toLowerCase();
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const DATE_KEYWORDS    = ['date', 'txn_date', 'transaction date', 'transdate', 'posted', 'trans date'];
+    const ACCOUNT_KEYWORDS = ['account', 'acc', 'acct', 'account number', 'account id'];
+    const AMOUNT_KEYWORDS  = ['amount', 'debit', 'credit', 'balance', 'sum'];
 
-    let rows = [];
-
-    if (fileName.endsWith('.csv')) {
-      rows = parseCSV(buffer.toString('utf-8'));
-    } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+    // Helper: extract rows from one Excel buffer using smart sheet picker
+    async function extractRowsFromExcel(buffer) {
       const inWb = new ExcelJS.Workbook();
       await inWb.xlsx.load(buffer);
-      const inSheet = inWb.worksheets[0];
+      let bestSheet = inWb.worksheets[0];
+      let bestScore = -1;
+      for (const sheet of inWb.worksheets) {
+        const sheetHeaders = [];
+        sheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
+          sheetHeaders.push(String(cell.value ?? '').toLowerCase().trim());
+        });
+        let score = 0;
+        if (sheetHeaders.some(h => DATE_KEYWORDS.some(k => h.includes(k))))    score += 3;
+        if (sheetHeaders.some(h => ACCOUNT_KEYWORDS.some(k => h.includes(k)))) score += 3;
+        if (sheetHeaders.some(h => AMOUNT_KEYWORDS.some(k => h.includes(k))))  score += 1;
+        score += Math.min(sheet.rowCount / 1000, 2);
+        if (score > bestScore) { bestScore = score; bestSheet = sheet; }
+      }
       const headers = [];
-      inSheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
+      bestSheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
         headers.push(String(cell.value ?? '').trim());
       });
-      inSheet.eachRow((row, rowNum) => {
+      const fileRows = [];
+      bestSheet.eachRow((row, rowNum) => {
         if (rowNum === 1) return;
         const obj = {};
         row.eachCell({ includeEmpty: true }, (cell, colNum) => {
           const h = headers[colNum - 1];
           if (h) obj[h] = cell.value;
         });
-        if (Object.values(obj).some(v => v !== null && v !== '')) rows.push(obj);
+        if (Object.values(obj).some(v => v !== null && v !== '')) fileRows.push(obj);
       });
-    } else {
-      return NextResponse.json({ error: 'Unsupported format. Upload CSV or Excel (.xlsx).' }, { status: 400 });
+      return fileRows;
+    }
+
+    let rows = [];
+
+    for (const file of uploadedFiles) {
+      const fileName = file.name.toLowerCase();
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      if (fileName.endsWith('.csv')) {
+        rows = rows.concat(parseCSV(buffer.toString('utf-8')));
+      } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        const fileRows = await extractRowsFromExcel(buffer);
+        rows = rows.concat(fileRows);
+      }
     }
 
     if (rows.length === 0) return NextResponse.json({ error: 'No data found in the uploaded file.' }, { status: 400 });

@@ -195,25 +195,52 @@ export default function Home() {
 // TRANSACTION ANALYSIS TOOL (NEW — Step 8)
 // ==========================================
 function TransactionAnalysisTool({ onBack }) {
-  const [file, setFile] = useState(null);
+  const [allFiles, setAllFiles] = useState([]);
+  const [selected, setSelected] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
 
-  const handleFileChange = (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    setFile(f);
+  const loadFiles = (fileList) => {
+    const valid = Array.from(fileList).filter(f => {
+      const n = f.name.toLowerCase();
+      return (n.endsWith('.csv') || n.endsWith('.xlsx') || n.endsWith('.xls')) && f.size > 0;
+    });
+    setAllFiles(prev => {
+      const existing = new Map(prev.map(f => [f.name, f]));
+      valid.forEach(f => existing.set(f.name, f));
+      return Array.from(existing.values());
+    });
+    setSelected(prev => {
+      const updated = { ...prev };
+      valid.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
+      return updated;
+    });
     setResult(null);
     setError('');
   };
 
+  const handleFolderSelect = (e) => loadFiles(e.target.files);
+  const handleFileSelect   = (e) => loadFiles(e.target.files);
+  const toggleOne = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleAll = () => {
+    const allChecked = allFiles.every(f => selected[f.name]);
+    const sel = {};
+    allFiles.forEach(f => sel[f.name] = !allChecked);
+    setSelected(sel);
+  };
+  const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
+
+  const selectedFiles = allFiles.filter(f => selected[f.name]);
+  const allChecked  = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
+  const someChecked = allFiles.some(f => selected[f.name]);
+
   const handleAnalyse = async () => {
-    if (!file) { setError('Please upload a CSV or Excel file first.'); return; }
+    if (selectedFiles.length === 0) { setError('Please select at least one file.'); return; }
     setLoading(true); setError(''); setResult(null);
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', selectedFiles[0]);
       const res = await fetch('/api/transaction-analysis', { method: 'POST', body: formData });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -221,7 +248,6 @@ function TransactionAnalysisTool({ onBack }) {
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      // Try to get filename from Content-Disposition header
       const cd = res.headers.get('Content-Disposition') || '';
       const match = cd.match(/filename="?([^"]+)"?/);
       const fileName = match ? match[1] : 'Transaction_Analysis.xlsx';
@@ -243,12 +269,8 @@ function TransactionAnalysisTool({ onBack }) {
 
   const handleClear = () => {
     if (result?.url) URL.revokeObjectURL(result.url);
-    setFile(null); setResult(null); setError('');
+    setAllFiles([]); setSelected({}); setResult(null); setError('');
   };
-
-  const isExcel = file && (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls'));
-  const isCSV  = file && file.name.toLowerCase().endsWith('.csv');
-  const validFile = isExcel || isCSV;
 
   return (
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
@@ -304,56 +326,69 @@ function TransactionAnalysisTool({ onBack }) {
         </p>
       </div>
 
-      {/* File upload */}
-      <div style={{ marginBottom: '20px' }}>
-        <label style={{ display: 'block', fontWeight: '600', color: '#333', fontSize: '13px', marginBottom: '8px' }}>
-          📁 Upload Transaction File
+      {/* Upload buttons */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
+          <span style={{ fontSize: '28px' }}>📁</span>
+          <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '13px' }}>Upload Folder</span>
+          <span style={{ color: '#aaa', fontSize: '11px' }}>All CSV/Excel files inside</span>
+          <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect} style={{ display: 'none' }} />
         </label>
-        <label style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px',
-          padding: '28px 20px',
-          background: file && validFile ? '#f0fff4' : file && !validFile ? '#fff0f0' : '#f7f8fc',
-          border: `2px dashed ${file && validFile ? '#38a169' : file && !validFile ? '#fc8181' : '#1a3c6e'}`,
-          borderRadius: '10px', cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s'
-        }}>
-          {!file && (
-            <>
-              <span style={{ fontSize: '36px' }}>📊</span>
-              <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '14px' }}>Click to upload CSV or Excel</span>
-              <span style={{ color: '#aaa', fontSize: '11px' }}>Supported: .csv, .xlsx, .xls</span>
-            </>
-          )}
-          {file && validFile && (
-            <>
-              <span style={{ fontSize: '32px' }}>{isCSV ? '📄' : '📊'}</span>
-              <span style={{ color: '#38a169', fontWeight: '700', fontSize: '14px' }}>✅ {file.name}</span>
-              <span style={{ color: '#aaa', fontSize: '11px' }}>{(file.size / 1024).toFixed(0)} KB — Click to change</span>
-            </>
-          )}
-          {file && !validFile && (
-            <>
-              <span style={{ fontSize: '32px' }}>❌</span>
-              <span style={{ color: '#cc0000', fontWeight: '700', fontSize: '14px' }}>{file.name}</span>
-              <span style={{ color: '#cc0000', fontSize: '11px' }}>Unsupported format — please upload .csv, .xlsx, or .xls</span>
-            </>
-          )}
-          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} style={{ display: 'none' }} />
+        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #276749', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
+          <span style={{ fontSize: '28px' }}>📊</span>
+          <span style={{ color: '#276749', fontWeight: '700', fontSize: '13px' }}>Upload Files</span>
+          <span style={{ color: '#aaa', fontSize: '11px' }}>Pick specific .csv / .xlsx files</span>
+          <input type="file" multiple accept=".csv,.xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
         </label>
       </div>
 
-      {/* Format badges */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '22px', flexWrap: 'wrap' }}>
-        {[
-          { label: '.csv', color: '#276749', bg: '#f0fff4', border: '#9ae6b4' },
-          { label: '.xlsx', color: '#1a3c6e', bg: '#eef2ff', border: '#c7d2fe' },
-          { label: '.xls', color: '#1a3c6e', bg: '#eef2ff', border: '#c7d2fe' },
-        ].map(b => (
-          <span key={b.label} style={{ background: b.bg, border: `1px solid ${b.border}`, color: b.color, borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>
-            {b.label}
-          </span>
-        ))}
-        <span style={{ color: '#aaa', fontSize: '11px', alignSelf: 'center' }}>accepted formats</span>
-      </div>
+      {allFiles.length === 0 && (
+        <p style={{ color: '#aaa', fontSize: '12px', textAlign: 'center', marginBottom: '20px' }}>
+          💡 Supports .csv, .xlsx and .xls — Claude AI will auto-detect the right sheet & columns
+        </p>
+      )}
+
+      {/* File list with checkboxes */}
+      {allFiles.length > 0 && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>
+              📊 Select file to analyse{' '}
+              <span style={{ color: '#888', fontWeight: '400', fontSize: '12px' }}>({selectedFiles.length} of {allFiles.length} selected)</span>
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={toggleAll}
+                style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                {allChecked ? 'Deselect All' : 'Select All'}
+              </button>
+              <button onClick={clearAll}
+                style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                Clear
+              </button>
+            </div>
+          </div>
+          <div style={{ border: '1px solid #eee', borderRadius: '10px', overflow: 'hidden', maxHeight: '280px', overflowY: 'auto' }}>
+            {allFiles.map((f, i) => {
+              const isCSV = f.name.toLowerCase().endsWith('.csv');
+              return (
+                <div key={f.name} onClick={() => toggleOne(f.name)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', background: selected[f.name] ? '#f0f4ff' : (i % 2 === 0 ? 'white' : '#fafafa'), borderBottom: i < allFiles.length - 1 ? '1px solid #f0f0f0' : 'none', cursor: 'pointer' }}>
+                  <div style={{ width: '18px', height: '18px', borderRadius: '4px', border: `2px solid ${selected[f.name] ? '#1a3c6e' : '#ccc'}`, background: selected[f.name] ? '#1a3c6e' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {selected[f.name] && <span style={{ color: 'white', fontSize: '11px', fontWeight: '700' }}>✓</span>}
+                  </div>
+                  <span style={{ fontSize: '13px', color: selected[f.name] ? '#1a3c6e' : '#555', fontWeight: selected[f.name] ? '600' : '400', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {isCSV ? '📄' : '📊'} {f.name}
+                  </span>
+                  <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0 }}>{(f.size / 1024).toFixed(0)} KB</span>
+                </div>
+              );
+            })}
+          </div>
+          {!someChecked && allFiles.length > 0 && (
+            <p style={{ color: '#cc0000', fontSize: '12px', marginTop: '6px' }}>⚠️ Please select at least one file.</p>
+          )}
+        </div>
+      )}
 
       {/* Error */}
       {error && (
@@ -365,13 +400,13 @@ function TransactionAnalysisTool({ onBack }) {
       {/* Analyse button */}
       <button
         onClick={handleAnalyse}
-        disabled={loading || !file || !validFile}
+        disabled={loading || selectedFiles.length === 0}
         style={{
           width: '100%', padding: '14px',
-          background: loading || !file || !validFile ? '#ccc' : '#0f2444',
+          background: loading || selectedFiles.length === 0 ? '#ccc' : '#0f2444',
           color: 'white', border: 'none', borderRadius: '8px',
           fontSize: '15px', fontWeight: '700',
-          cursor: loading || !file || !validFile ? 'not-allowed' : 'pointer',
+          cursor: loading || selectedFiles.length === 0 ? 'not-allowed' : 'pointer',
           marginBottom: '16px', transition: 'background 0.2s'
         }}>
         {loading ? '⏳ Building pivot & heatmap... Please wait...' : '📈 Generate Transaction Analysis'}
@@ -381,7 +416,7 @@ function TransactionAnalysisTool({ onBack }) {
       {loading && (
         <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', textAlign: 'center' }}>
           <p style={{ color: '#1a3c6e', fontSize: '12px', margin: '0', lineHeight: '1.6' }}>
-            🔄 Parsing transactions → Building Account × Month pivot → Applying heatmap colors → Generating Excel...
+            🔄 Detecting columns → Building Account × Month pivot → Applying heatmap → Claude AI writing insights...
           </p>
         </div>
       )}
@@ -391,7 +426,7 @@ function TransactionAnalysisTool({ onBack }) {
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 6px' }}>✅ Analysis Ready!</p>
           <p style={{ color: '#555', fontSize: '12px', margin: '0 0 20px' }}>
-            Tab: <strong>"Account Transaction Heatmap"</strong> — pivot with heatmap colors, Total row + column, frozen pane &amp; auto-filter included.
+            Tab 1: <strong>Account Transaction Heatmap</strong> — pivot with colors, totals, frozen pane. Tab 2: <strong>AI Insights</strong> — Claude's written analysis.
           </p>
 
           {/* What's inside */}
@@ -1838,4 +1873,3 @@ function TaxExtractTool({ onBack }) {
     </div>
   );
 }
-
