@@ -111,7 +111,8 @@ export default function Home() {
     { id: 'extraction', step: 5, icon: '🔍', title: 'Extraction', desc: 'Extract data from Invoices, Bank Statements & Tax documents into Excel', active: true },
     { id: 'tracker', step: 6, icon: '📋', title: 'Statement Tracker', desc: 'Upload Bank & Credit Card extraction Excels → AI generates unified month-wise tracker', active: true },
     { id: 'desc-categoriser', step: 7, icon: '🏷️', title: 'Description Categoriser', desc: 'Upload Excel with distinct descriptions → AI categorises each → Download Excel', active: true },
-    { id: 'indexing', step: 8, icon: '📁', title: 'Indexing', desc: 'Coming soon — Auto-organize files with AI-generated index', active: false },
+    { id: 'transaction-analysis', step: 8, icon: '📈', title: 'Transaction Analysis', desc: 'Upload CSV/Excel → Account × Month pivot table → Heatmap Excel output', active: true },
+    { id: 'indexing', step: 9, icon: '📁', title: 'Indexing', desc: 'Coming soon — Auto-organize files with AI-generated index', active: false },
   ];
 
   return (
@@ -143,7 +144,7 @@ export default function Home() {
 
       {!activeTool && (
         <div style={{ background: 'white', borderBottom: '1px solid #eee', padding: '14px 20px', overflowX: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', maxWidth: '1100px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', maxWidth: '1200px', margin: '0 auto' }}>
             {tools.filter(t => t.active).map((t, i, arr) => (
               <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: '#f0f4ff', border: '1px solid #dce6ff' }}>
@@ -180,12 +181,252 @@ export default function Home() {
         {activeTool === 'extraction' && <ExtractionTool onBack={() => setActiveTool(null)} />}
         {activeTool === 'tracker' && <StatementTrackerTool onBack={() => setActiveTool(null)} />}
         {activeTool === 'desc-categoriser' && <DescriptionCategoriserTool onBack={() => setActiveTool(null)} />}
+        {activeTool === 'transaction-analysis' && <TransactionAnalysisTool onBack={() => setActiveTool(null)} />}
       </div>
 
       <div style={{ textAlign: 'center', padding: '20px', color: '#ccc', fontSize: '11px', letterSpacing: '1px' }}>
         POWERED BY CLAUDE AI • ANTHROPIC
       </div>
     </main>
+  );
+}
+
+// ==========================================
+// TRANSACTION ANALYSIS TOOL (NEW — Step 8)
+// ==========================================
+function TransactionAnalysisTool({ onBack }) {
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState(null);
+
+  const handleFileChange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    setFile(f);
+    setResult(null);
+    setError('');
+  };
+
+  const handleAnalyse = async () => {
+    if (!file) { setError('Please upload a CSV or Excel file first.'); return; }
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/transaction-analysis', { method: 'POST', body: formData });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Server error: ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      // Try to get filename from Content-Disposition header
+      const cd = res.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename="?([^"]+)"?/);
+      const fileName = match ? match[1] : 'Transaction_Analysis.xlsx';
+      setResult({ url, fileName });
+    } catch (err) {
+      setError(err.message || 'Something went wrong.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!result) return;
+    const a = document.createElement('a');
+    a.href = result.url;
+    a.download = result.fileName;
+    a.click();
+  };
+
+  const handleClear = () => {
+    if (result?.url) URL.revokeObjectURL(result.url);
+    setFile(null); setResult(null); setError('');
+  };
+
+  const isExcel = file && (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls'));
+  const isCSV  = file && file.name.toLowerCase().endsWith('.csv');
+  const validFile = isExcel || isCSV;
+
+  return (
+    <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
+      {/* Back */}
+      <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>
+        ← Back to Dashboard
+      </button>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px', flexWrap: 'wrap' }}>
+        <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 8</span>
+        <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>📈 Transaction Analysis</h2>
+        <span style={{ background: '#f0f4ff', border: '1px solid #c7d2fe', color: '#4338ca', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '700' }}>🤖 AI-Powered</span>
+      </div>
+      <p style={{ color: '#888', fontSize: '13px', marginBottom: '24px' }}>
+        Upload a transaction dataset → Claude AI detects columns & builds pivot → Heatmap + AI insight report in Excel
+      </p>
+
+      {/* How it works */}
+      <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '10px', padding: '18px', marginBottom: '22px' }}>
+        <p style={{ fontWeight: '700', color: '#1a3c6e', fontSize: '13px', margin: '0 0 12px' }}>📝 How it works:</p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          {[
+            { n: '1', t: 'Upload CSV or Excel with any column naming — Account ID, Date, Amount etc.' },
+            { n: '2', t: '🤖 Claude AI reads your column headers and intelligently maps them — no manual setup needed' },
+            { n: '3', t: 'Pivot built: Rows = Accounts, Columns = Month-Year, Values = Count of transactions. Heatmap applied.' },
+            { n: '4', t: '🤖 Claude AI analyzes the pivot and writes a full insight report — saved as Tab 2 in your Excel' },
+          ].map(s => (
+            <div key={s.n} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+              <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '50%', width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', flexShrink: 0 }}>{s.n}</span>
+              <span style={{ color: '#555', fontSize: '12px', lineHeight: '1.5' }}>{s.t}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Required columns info */}
+      <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '10px', padding: '14px 18px', marginBottom: '22px' }}>
+        <p style={{ fontWeight: '700', color: '#92400e', fontSize: '12px', margin: '0 0 8px' }}>📋 Required columns in your file (flexible naming):</p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+          {[
+            { col: 'Account ID / Number', examples: 'account_id, Account Number, AccountID, acc_id' },
+            { col: 'Transaction Date', examples: 'transaction_date, txn_date, TransactionDate, date' },
+          ].map((c, i) => (
+            <div key={i} style={{ background: 'white', borderRadius: '6px', padding: '8px 12px', border: '1px solid #fde68a' }}>
+              <div style={{ fontWeight: '700', color: '#1a3c6e', fontSize: '12px' }}>{c.col}</div>
+              <div style={{ color: '#888', fontSize: '10px', marginTop: '2px', fontStyle: 'italic' }}>{c.examples}</div>
+            </div>
+          ))}
+        </div>
+        <p style={{ color: '#92400e', fontSize: '11px', margin: '8px 0 0' }}>
+          ℹ️ Transaction Amount & Transaction ID are optional — only Account ID + Date are used for the pivot count.
+        </p>
+      </div>
+
+      {/* File upload */}
+      <div style={{ marginBottom: '20px' }}>
+        <label style={{ display: 'block', fontWeight: '600', color: '#333', fontSize: '13px', marginBottom: '8px' }}>
+          📁 Upload Transaction File
+        </label>
+        <label style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px',
+          padding: '28px 20px',
+          background: file && validFile ? '#f0fff4' : file && !validFile ? '#fff0f0' : '#f7f8fc',
+          border: `2px dashed ${file && validFile ? '#38a169' : file && !validFile ? '#fc8181' : '#1a3c6e'}`,
+          borderRadius: '10px', cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s'
+        }}>
+          {!file && (
+            <>
+              <span style={{ fontSize: '36px' }}>📊</span>
+              <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '14px' }}>Click to upload CSV or Excel</span>
+              <span style={{ color: '#aaa', fontSize: '11px' }}>Supported: .csv, .xlsx, .xls</span>
+            </>
+          )}
+          {file && validFile && (
+            <>
+              <span style={{ fontSize: '32px' }}>{isCSV ? '📄' : '📊'}</span>
+              <span style={{ color: '#38a169', fontWeight: '700', fontSize: '14px' }}>✅ {file.name}</span>
+              <span style={{ color: '#aaa', fontSize: '11px' }}>{(file.size / 1024).toFixed(0)} KB — Click to change</span>
+            </>
+          )}
+          {file && !validFile && (
+            <>
+              <span style={{ fontSize: '32px' }}>❌</span>
+              <span style={{ color: '#cc0000', fontWeight: '700', fontSize: '14px' }}>{file.name}</span>
+              <span style={{ color: '#cc0000', fontSize: '11px' }}>Unsupported format — please upload .csv, .xlsx, or .xls</span>
+            </>
+          )}
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} style={{ display: 'none' }} />
+        </label>
+      </div>
+
+      {/* Format badges */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '22px', flexWrap: 'wrap' }}>
+        {[
+          { label: '.csv', color: '#276749', bg: '#f0fff4', border: '#9ae6b4' },
+          { label: '.xlsx', color: '#1a3c6e', bg: '#eef2ff', border: '#c7d2fe' },
+          { label: '.xls', color: '#1a3c6e', bg: '#eef2ff', border: '#c7d2fe' },
+        ].map(b => (
+          <span key={b.label} style={{ background: b.bg, border: `1px solid ${b.border}`, color: b.color, borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>
+            {b.label}
+          </span>
+        ))}
+        <span style={{ color: '#aaa', fontSize: '11px', alignSelf: 'center' }}>accepted formats</span>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>
+          ❌ {error}
+        </div>
+      )}
+
+      {/* Analyse button */}
+      <button
+        onClick={handleAnalyse}
+        disabled={loading || !file || !validFile}
+        style={{
+          width: '100%', padding: '14px',
+          background: loading || !file || !validFile ? '#ccc' : '#0f2444',
+          color: 'white', border: 'none', borderRadius: '8px',
+          fontSize: '15px', fontWeight: '700',
+          cursor: loading || !file || !validFile ? 'not-allowed' : 'pointer',
+          marginBottom: '16px', transition: 'background 0.2s'
+        }}>
+        {loading ? '⏳ Building pivot & heatmap... Please wait...' : '📈 Generate Transaction Analysis'}
+      </button>
+
+      {/* Loading hint */}
+      {loading && (
+        <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', textAlign: 'center' }}>
+          <p style={{ color: '#1a3c6e', fontSize: '12px', margin: '0', lineHeight: '1.6' }}>
+            🔄 Parsing transactions → Building Account × Month pivot → Applying heatmap colors → Generating Excel...
+          </p>
+        </div>
+      )}
+
+      {/* Result */}
+      {result && (
+        <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
+          <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 6px' }}>✅ Analysis Ready!</p>
+          <p style={{ color: '#555', fontSize: '12px', margin: '0 0 20px' }}>
+            Tab: <strong>"Account Transaction Heatmap"</strong> — pivot with heatmap colors, Total row + column, frozen pane &amp; auto-filter included.
+          </p>
+
+          {/* What's inside */}
+          <div style={{ background: 'white', border: '1px solid #d1fae5', borderRadius: '8px', padding: '14px', marginBottom: '18px' }}>
+            <p style={{ fontWeight: '700', color: '#166534', fontSize: '12px', margin: '0 0 10px' }}>📋 What's inside the Excel:</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {[
+                '🎨 Tab 1: Heatmap — White → Dark Navy by transaction volume',
+                '📅 Months sorted chronologically, accounts A-Z',
+                '➕ Total column (right) + Total row (bottom)',
+                '❄️ Frozen pane + Auto-filter on header row',
+                '🤖 Tab 2: Claude AI written insight report',
+                '💡 AI flags top accounts, peak months & anomalies',
+              ].map((item, i) => (
+                <div key={i} style={{ fontSize: '11px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={handleDownload}
+            style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', marginBottom: '10px' }}>
+            📥 Download Transaction_Analysis.xlsx
+          </button>
+
+          <button
+            onClick={handleClear}
+            style={{ width: '100%', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+            ↺ Analyse Another File
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -267,7 +508,6 @@ function StatementTrackerTool({ onBack }) {
         Upload Bank Statement <strong>or</strong> Credit Card extraction Excels (from Step 5B) → AI normalizes data → Unified month-wise tracker generated
       </p>
 
-      {/* Type badges */}
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '20px', padding: '5px 14px' }}>
           <span style={{ color: '#002060', fontSize: '13px', fontWeight: '700' }}>🏦</span>
@@ -284,7 +524,6 @@ function StatementTrackerTool({ onBack }) {
         </div>
       </div>
 
-      {/* How it works */}
       <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '10px', padding: '18px', marginBottom: '20px' }}>
         <p style={{ fontWeight: '700', color: '#1a3c6e', fontSize: '13px', margin: '0 0 12px' }}>📝 How it works:</p>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
@@ -302,7 +541,6 @@ function StatementTrackerTool({ onBack }) {
         </div>
       </div>
 
-      {/* Upload buttons */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
           <span style={{ fontSize: '28px' }}>📁</span>
@@ -324,7 +562,6 @@ function StatementTrackerTool({ onBack }) {
         </p>
       )}
 
-      {/* File list */}
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -376,12 +613,9 @@ function StatementTrackerTool({ onBack }) {
           : `📋 Generate Tracker${selectedFiles.length > 0 ? ` (${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''})` : ''}`}
       </button>
 
-      {/* Result */}
       {result && (
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 16px' }}>✅ Tracker Generated!</p>
-
-          {/* Stats grid — 4 cards */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '10px', marginBottom: '16px' }}>
             <div style={{ background: '#eef2ff', border: '1px solid #c7d2fe', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
               <div style={{ fontSize: '24px', fontWeight: '800', color: '#002060' }}>{result.totalBankAccounts ?? 0}</div>
@@ -402,8 +636,6 @@ function StatementTrackerTool({ onBack }) {
               </div>
             </div>
           </div>
-
-          {/* Total accounts summary */}
           <div style={{ background: 'white', borderRadius: '8px', padding: '10px 14px', marginBottom: '14px', display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', border: '1px solid #eee' }}>
             <span style={{ fontSize: '12px', color: '#555', fontWeight: '600' }}>Total:</span>
             <span style={{ fontSize: '12px', color: '#333' }}>{result.totalAccounts} distinct accounts/cards tracked</span>
@@ -411,13 +643,11 @@ function StatementTrackerTool({ onBack }) {
               <span style={{ fontSize: '11px', color: '#888' }}>({result.totalBankAccounts} bank + {result.totalCreditCards} credit card)</span>
             )}
           </div>
-
           {result.totalGaps > 0 && (
             <div style={{ background: '#FFEBEE', border: '1px solid #ef5350', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#C62828', fontWeight: '600' }}>
               ⚠️ {result.totalGaps} month{result.totalGaps !== 1 ? 's' : ''} marked <strong>?</strong> in the tracker — statements missing in the middle of the date range. Request from opposition.
             </div>
           )}
-
           {result.errors && result.errors.length > 0 && (
             <div style={{ background: '#fff0f0', borderRadius: '8px', padding: '12px', marginBottom: '16px' }}>
               <p style={{ color: '#cc0000', fontWeight: '700', margin: '0 0 4px', fontSize: '13px' }}>⚠️ Failed files:</p>
@@ -426,12 +656,10 @@ function StatementTrackerTool({ onBack }) {
               ))}
             </div>
           )}
-
           <button onClick={handleDownload}
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Statement Tracker (.xlsx)
           </button>
-
           <button onClick={clearAll}
             style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
             ↺ Upload Another Set
@@ -491,7 +719,6 @@ function DescriptionCategoriserTool({ onBack }) {
   const handleCategorise = async () => {
     if (selectedFiles.length === 0) { setError('Please select at least one Excel file.'); return; }
     setLoading(true); setError(''); setResults([]); setDone(false);
-
     try {
       setProgress('Loading Excel parser...');
       if (!window.XLSX) {
@@ -505,7 +732,6 @@ function DescriptionCategoriserTool({ onBack }) {
       }
       const XLSX = window.XLSX;
       const allDescriptions = new Set();
-
       for (const file of selectedFiles) {
         setProgress(`Reading ${file.name}...`);
         const buffer = await file.arrayBuffer();
@@ -521,24 +747,19 @@ function DescriptionCategoriserTool({ onBack }) {
           }
         }
       }
-
       if (allDescriptions.size === 0) {
         throw new Error('No "Description" column found. Make sure the column header is exactly "Description".');
       }
-
       const descArray = [...allDescriptions];
       const totalChunks = Math.ceil(descArray.length / 50);
       setProgress(`Categorising ${descArray.length} distinct descriptions with AI (${totalChunks} batches)...`);
-
       const res = await fetch('/api/categorise-descriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ descriptions: descArray }),
       });
-
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Categorisation failed');
-
       setResults(data.results);
       setDone(true);
       setProgress('');
@@ -1617,3 +1838,4 @@ function TaxExtractTool({ onBack }) {
     </div>
   );
 }
+
