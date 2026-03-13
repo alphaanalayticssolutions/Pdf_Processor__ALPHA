@@ -682,7 +682,15 @@ export async function POST(req) {
     // Assign a unique serial number to every row in the merged dataset
     rows = rows.map((row, idx) => ({ ...row, __serial: idx + 1 }));
 
-    const headers = Object.keys(rows[0]);
+    // Collect real column names across ALL rows (multi-sheet files can have different columns)
+    // Exclude internal __ keys so Claude doesn't get confused by __serial etc.
+    const headerSet = new Set();
+    for (const row of rows) {
+      for (const k of Object.keys(row)) {
+        if (!k.startsWith('__')) headerSet.add(k);
+      }
+    }
+    const headers = [...headerSet];
 
     // ── Claude Call 1: Detect columns ─────────────────────────────────────────
     let colMap;
