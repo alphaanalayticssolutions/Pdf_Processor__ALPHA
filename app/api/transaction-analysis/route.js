@@ -209,16 +209,17 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
     const dateKey = toDateKey(date);
     const desc = descCol ? String(row[descCol] ?? '').trim() : '';
 
+    const serial = row.__serial || null;
     if (debitCol && creditCol) {
       const d = parseAmt(row[debitCol]);
       const c = parseAmt(row[creditCol]);
-      if (d && d > 0) debits.push({ account, date, dateKey, amount: Math.round(d * 100) / 100, desc });
-      if (c && c > 0) credits.push({ account, date, dateKey, amount: Math.round(c * 100) / 100, desc });
+      if (d && d > 0) debits.push({ account, date, dateKey, amount: Math.round(d * 100) / 100, desc, serial });
+      if (c && c > 0) credits.push({ account, date, dateKey, amount: Math.round(c * 100) / 100, desc, serial });
     } else if (colMap.amount_col) {
       const a = parseAmt(row[colMap.amount_col]);
       if (a === null) continue;
-      if (a < 0) debits.push({ account, date, dateKey, amount: Math.round(Math.abs(a) * 100) / 100, desc });
-      else if (a > 0) credits.push({ account, date, dateKey, amount: Math.round(a * 100) / 100, desc });
+      if (a < 0) debits.push({ account, date, dateKey, amount: Math.round(Math.abs(a) * 100) / 100, desc, serial });
+      else if (a > 0) credits.push({ account, date, dateKey, amount: Math.round(a * 100) / 100, desc, serial });
     }
   }
 
@@ -257,6 +258,8 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
         creditDateKey: credit.dateKey,
         debitDesc:     debit.desc,
         creditDesc:    credit.desc,
+        debitSerial:   debit.serial,
+        creditSerial:  credit.serial,
         diffDays,
       });
       usedCredits.add(i);
@@ -324,8 +327,8 @@ async function verifyTransfersWithClaude(candidates) {
 function addInterbankSheet(wb, verified) {
   const ws3 = wb.addWorksheet('Matched Interbank Transfers');
 
-  const COLS   = ['From Account','To Account','Amount ($)','Debit Date','Credit Date','Debit Description','Credit Description','AI Verification','Match Type','Confidence','Reason'];
-  const WIDTHS = [20, 20, 14, 14, 14, 38, 38, 16, 13, 13, 50];
+  const COLS   = ['From Account','To Account','Amount ($)','Debit Date','Credit Date','Debit Description','Credit Description','AI Verification','Match Type','Confidence','Reason','Debit Serial','Credit Serial'];
+  const WIDTHS = [20, 20, 14, 14, 14, 38, 38, 16, 13, 13, 50, 13, 13];
   const NUM_COLS = COLS.length;
 
   // Truncate long strings so rows stay a fixed height
@@ -347,7 +350,7 @@ function addInterbankSheet(wb, verified) {
 
   if (verified.length === 0) {
     ws3.addRow(['No matched interbank transfers detected.', ...Array(NUM_COLS - 1).fill('')]);
-    ws3.mergeCells('A2:K2');
+    ws3.mergeCells('A2:M2');
     const cell = ws3.getCell('A2');
     cell.value     = 'No matched interbank transfers detected.';
     cell.font      = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF888888' } };
@@ -377,6 +380,8 @@ function addInterbankSheet(wb, verified) {
         m.match_type  || '',
         m.confidence  || '',
         trunc(m.reason, 80),
+        m.debitSerial  ?? '',
+        m.creditSerial ?? '',
       ]);
       r.height = 18;
 
@@ -400,7 +405,7 @@ function addInterbankSheet(wb, verified) {
     const totalAmt  = Math.round(transfers.filter(t => t.is_transfer).reduce((s, m) => s + m.amount, 0) * 100) / 100;
     const summaryRow = ws3.addRow([
       `✅ ${confirmed} confirmed transfer(s)   ❌ ${nonMatch} non-match(es)   🤖 Claude AI verified`,
-      '', totalAmt, '', '', '', '', '', '', '', ''
+      '', totalAmt, '', '', '', '', '', '', '', '', '', ''
     ]);
     summaryRow.height = 22;
     // Style all summary cells
@@ -617,38 +622,44 @@ export async function POST(req) {
     const ACCOUNT_KEYWORDS = ['account', 'acc', 'acct', 'account number', 'account id'];
     const AMOUNT_KEYWORDS  = ['amount', 'debit', 'credit', 'balance', 'sum'];
 
-    // Helper: extract rows from one Excel buffer using smart sheet picker
+    // Helper: extract rows from ALL valid sheets in one Excel file
+    // A sheet is "valid" if it scores >= 3 (has date + account/amount keywords)
+    // This ensures Bank Transactions AND Credit Card sheets are both included
     async function extractRowsFromExcel(buffer) {
       const inWb = new ExcelJS.Workbook();
       await inWb.xlsx.load(buffer);
-      let bestSheet = inWb.worksheets[0];
-      let bestScore = -1;
-      for (const sheet of inWb.worksheets) {
-        const sheetHeaders = [];
+
+      const scoreSheet = (sheet) => {
+        const hdrs = [];
         sheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
-          sheetHeaders.push(String(cell.value ?? '').toLowerCase().trim());
+          hdrs.push(String(cell.value ?? '').toLowerCase().trim());
         });
         let score = 0;
-        if (sheetHeaders.some(h => DATE_KEYWORDS.some(k => h.includes(k))))    score += 3;
-        if (sheetHeaders.some(h => ACCOUNT_KEYWORDS.some(k => h.includes(k)))) score += 3;
-        if (sheetHeaders.some(h => AMOUNT_KEYWORDS.some(k => h.includes(k))))  score += 1;
-        score += Math.min(sheet.rowCount / 1000, 2);
-        if (score > bestScore) { bestScore = score; bestSheet = sheet; }
-      }
-      const headers = [];
-      bestSheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
-        headers.push(String(cell.value ?? '').trim());
-      });
+        if (hdrs.some(h => DATE_KEYWORDS.some(k => h.includes(k))))    score += 3;
+        if (hdrs.some(h => ACCOUNT_KEYWORDS.some(k => h.includes(k)))) score += 3;
+        if (hdrs.some(h => AMOUNT_KEYWORDS.some(k => h.includes(k))))  score += 1;
+        return { score, hdrs };
+      };
+
       const fileRows = [];
-      bestSheet.eachRow((row, rowNum) => {
-        if (rowNum === 1) return;
-        const obj = {};
-        row.eachCell({ includeEmpty: true }, (cell, colNum) => {
-          const h = headers[colNum - 1];
-          if (h) obj[h] = cell.value;
+      for (const sheet of inWb.worksheets) {
+        const { score, hdrs } = scoreSheet(sheet);
+        if (score < 3) continue; // skip non-transaction sheets (e.g. Tracker)
+
+        const headers = [];
+        sheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
+          headers.push(String(cell.value ?? '').trim());
         });
-        if (Object.values(obj).some(v => v !== null && v !== '')) fileRows.push(obj);
-      });
+        sheet.eachRow((row, rowNum) => {
+          if (rowNum === 1) return;
+          const obj = {};
+          row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+            const h = headers[colNum - 1];
+            if (h) obj[h] = cell.value;
+          });
+          if (Object.values(obj).some(v => v !== null && v !== '')) fileRows.push(obj);
+        });
+      }
       return fileRows;
     }
 
@@ -667,6 +678,9 @@ export async function POST(req) {
     }
 
     if (rows.length === 0) return NextResponse.json({ error: 'No data found in the uploaded file.' }, { status: 400 });
+
+    // Assign a unique serial number to every row in the merged dataset
+    rows = rows.map((row, idx) => ({ ...row, __serial: idx + 1 }));
 
     const headers = Object.keys(rows[0]);
 
