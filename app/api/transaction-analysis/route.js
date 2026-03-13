@@ -30,6 +30,30 @@ Respond ONLY with a valid JSON object in this exact format, no explanation, no m
 
 If you cannot confidently identify a required field (account_col or date_col), return null for that field.`;
 
+const TRANSFER_VERIFICATION_PROMPT = `You are a forensic financial analyst specializing in interbank transfer detection.
+I will give you a list of potential debit-credit pairs that share the same dollar amount across different bank accounts.
+Your job is to verify whether each pair represents an actual interbank transfer.
+
+For each pair, analyze:
+1. The debit and credit dates — same day = "Same Day", next calendar day = "Next Day", more than 1 day apart = "Not Transfer"
+2. The transaction descriptions — do they suggest a transfer (e.g. "TRANSFER", "WIRE", "ACH", "XFER", "ZELLE", "ONLINE PMT", "MEMO" referencing the other account)?
+3. The account numbers — are they clearly different entities or could be same owner moving money?
+
+Return ONLY a JSON array with one object per pair, in the same order as input:
+[
+  {
+    "is_transfer": true,
+    "match_type": "Same Day | Next Day | Not Transfer",
+    "confidence": "High | Medium | Low",
+    "reason": "One concise sentence explaining your decision"
+  }
+]
+
+No markdown, no explanation outside the JSON array.
+
+Pairs to evaluate:
+{PAIRS}`;
+
 
 const INSIGHTS_PROMPT = `You are a financial data analyst. I will give you a transaction pivot table summary.
 Your job is to analyze it and write a clear, concise insight report.
@@ -138,73 +162,160 @@ function detectDebitCreditCols(headers) {
   };
 }
 
+// ─── DESCRIPTION COLUMN DETECTOR ────────────────────────────────────────────
+function detectDescriptionCol(headers) {
+  const lower = headers.map(h => h.toLowerCase().trim());
+  const keywords = ['description', 'desc', 'memo', 'narrative', 'details', 'transaction description', 'particulars', 'remarks', 'note'];
+  const exact = lower.findIndex(h => keywords.some(k => h === k));
+  if (exact !== -1) return headers[exact];
+  const partial = lower.findIndex(h => keywords.some(k => h.includes(k)));
+  return partial !== -1 ? headers[partial] : null;
+}
+
 // ─── INTERBANK TRANSFER MATCHER ───────────────────────────────────────────────
-function matchInterbankTransfers(rows, colMap, debitCol, creditCol) {
+
+// Convert any Date to a timezone-safe YYYY-MM-DD string
+// Using getFullYear/Month/Date (local) avoids UTC-vs-local shift
+// that causes Excel serial dates to appear as "day before"
+function toDateKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Add N days to a YYYY-MM-DD string, return new YYYY-MM-DD string
+function addDays(dateKey, n) {
+  const d = new Date(dateKey + 'T00:00:00'); // force local midnight parse
+  d.setDate(d.getDate() + n);
+  return toDateKey(d);
+}
+
+function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
   const debits  = [];
   const credits = [];
+
+  const parseAmt = (v) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = parseFloat(String(v).replace(/[$,()]/g, ''));
+    return isNaN(n) ? null : n;
+  };
 
   for (const row of rows) {
     const account = String(row[colMap.account_col] ?? '').trim();
     if (!account) continue;
     const date = parseDate(row[colMap.date_col]);
     if (!date) continue;
-
-    const parseAmt = (v) => {
-      if (v === null || v === undefined || v === '') return null;
-      const n = parseFloat(String(v).replace(/[$,]/g, ''));
-      return isNaN(n) ? null : n;
-    };
+    const dateKey = toDateKey(date);
+    const desc = descCol ? String(row[descCol] ?? '').trim() : '';
 
     if (debitCol && creditCol) {
       const d = parseAmt(row[debitCol]);
       const c = parseAmt(row[creditCol]);
-      if (d && d > 0) debits.push({ account, date, amount: Math.round(d * 100) / 100 });
-      if (c && c > 0) credits.push({ account, date, amount: Math.round(c * 100) / 100 });
+      if (d && d > 0) debits.push({ account, date, dateKey, amount: Math.round(d * 100) / 100, desc });
+      if (c && c > 0) credits.push({ account, date, dateKey, amount: Math.round(c * 100) / 100, desc });
     } else if (colMap.amount_col) {
       const a = parseAmt(row[colMap.amount_col]);
       if (a === null) continue;
-      if (a < 0) debits.push({ account, date, amount: Math.round(Math.abs(a) * 100) / 100 });
-      else if (a > 0) credits.push({ account, date, amount: Math.round(a * 100) / 100 });
+      if (a < 0) debits.push({ account, date, dateKey, amount: Math.round(Math.abs(a) * 100) / 100, desc });
+      else if (a > 0) credits.push({ account, date, dateKey, amount: Math.round(a * 100) / 100, desc });
     }
   }
 
-  const matches = [];
-  const usedCredits = new Set();
+  // Build lookup map: amount → credit indices
+  const creditsByAmt = new Map();
+  credits.forEach((c, i) => {
+    const key = c.amount.toFixed(2);
+    if (!creditsByAmt.has(key)) creditsByAmt.set(key, []);
+    creditsByAmt.get(key).push(i);
+  });
 
-  // For each debit, find first matching credit in a different account on same/next day
+  const candidates = [];
+  const usedCredits = new Set();
+  // Window: collect pairs where credit is within 0–3 days of debit
+  // Claude will do the final same-day / next-day / not-transfer verdict
+  const MAX_DAY_WINDOW = 3;
+
   for (const debit of debits) {
-    const d0 = new Date(debit.date); d0.setHours(0, 0, 0, 0);
-    for (let i = 0; i < credits.length; i++) {
+    const amtKey = debit.amount.toFixed(2);
+    const pool = creditsByAmt.get(amtKey) || [];
+    for (const i of pool) {
       if (usedCredits.has(i)) continue;
       const credit = credits[i];
       if (credit.account === debit.account) continue;
-      if (credit.amount !== debit.amount) continue;
-      const c0 = new Date(credit.date); c0.setHours(0, 0, 0, 0);
-      const diffDays = Math.round((c0 - d0) / 86400000);
-      if (diffDays === 0 || diffDays === 1) {
-        matches.push({
-          fromAccount: debit.account,
-          toAccount:   credit.account,
-          amount:      debit.amount,
-          debitDate:   debit.date,
-          creditDate:  credit.date,
-          matchType:   diffDays === 0 ? 'Same Day' : 'Next Day',
-        });
-        usedCredits.add(i);
-        break;
-      }
+      const debitMs  = new Date(debit.dateKey  + 'T00:00:00').getTime();
+      const creditMs = new Date(credit.dateKey + 'T00:00:00').getTime();
+      const diffDays = Math.round((creditMs - debitMs) / 86400000);
+      if (diffDays < 0 || diffDays > MAX_DAY_WINDOW) continue;
+      candidates.push({
+        fromAccount:   debit.account,
+        toAccount:     credit.account,
+        amount:        debit.amount,
+        debitDate:     debit.date,
+        creditDate:    credit.date,
+        debitDateKey:  debit.dateKey,
+        creditDateKey: credit.dateKey,
+        debitDesc:     debit.desc,
+        creditDesc:    credit.desc,
+        diffDays,
+      });
+      usedCredits.add(i);
+      break; // one best credit per debit
     }
   }
 
-  matches.sort((a, b) => a.debitDate - b.debitDate);
-  return matches;
+  candidates.sort((a, b) => a.debitDate - b.debitDate);
+  return candidates;
+}
+
+// ─── CLAUDE: VERIFY INTERBANK TRANSFERS ──────────────────────────────────────
+async function verifyTransfersWithClaude(candidates) {
+  if (candidates.length === 0) return [];
+
+  const fmtDate = (d) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+
+  const pairs = candidates.map((c, idx) => ({
+    index: idx,
+    from_account:   c.fromAccount,
+    to_account:     c.toAccount,
+    amount:         `$${c.amount.toFixed(2)}`,
+    debit_date:     fmtDate(c.debitDate),
+    credit_date:    fmtDate(c.creditDate),
+    debit_desc:     c.debitDesc || '(no description)',
+    credit_desc:    c.creditDesc || '(no description)',
+  }));
+
+  const prompt = TRANSFER_VERIFICATION_PROMPT.replace('{PAIRS}', JSON.stringify(pairs, null, 2));
+
+  const msg = await anthropic.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 2000,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const text = (msg.content[0]?.text || '').replace(/```json|```/g, '').trim();
+  let verdicts;
+  try {
+    verdicts = JSON.parse(text);
+  } catch {
+    // If Claude response broken, default all to unverified
+    verdicts = candidates.map(() => ({ is_transfer: false, match_type: 'Unknown', confidence: 'Low', reason: 'AI verification unavailable.' }));
+  }
+
+  // Merge verdicts back into candidates
+  return candidates.map((c, idx) => {
+    const v = verdicts[idx] || { is_transfer: false, match_type: 'Unknown', confidence: 'Low', reason: 'No verdict returned.' };
+    return { ...c, ...v };
+  });
 }
 
 // ─── TAB 3: MATCHED INTERBANK TRANSFERS ───────────────────────────────────────
-function addInterbankSheet(wb, matches) {
+function addInterbankSheet(wb, verified) {
   const ws3 = wb.addWorksheet('Matched Interbank Transfers');
-  const COLS = ['From Account', 'To Account', 'Amount ($)', 'Debit Date', 'Credit Date', 'Match Type'];
-  const WIDTHS = [28, 28, 18, 18, 18, 14];
+
+  const COLS   = ['From Account','To Account','Amount ($)','Debit Date','Credit Date','Debit Description','Credit Description','AI Verification','Match Type','Confidence','Reason'];
+  const WIDTHS = [22, 22, 14, 16, 16, 36, 36, 18, 14, 14, 45];
+  const NUM_COLS = COLS.length;
 
   // Header row — navy
   const hdrRow = ws3.addRow(COLS);
@@ -212,45 +323,65 @@ function addInterbankSheet(wb, matches) {
   hdrRow.eachCell(cell => {
     cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002060' } };
     cell.font      = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
-    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     cell.border    = { top: { style: 'thin', color: { argb: 'FFB0B0B0' } }, bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } }, left: { style: 'thin', color: { argb: 'FFB0B0B0' } }, right: { style: 'thin', color: { argb: 'FFB0B0B0' } } };
   });
 
-  if (matches.length === 0) {
-    // Merge A2:F2 and show message
-    ws3.addRow(['No matched transfers detected.', '', '', '', '', '']);
-    ws3.mergeCells('A2:F2');
+  const transfers = verified.filter(v => v.is_transfer);
+
+  if (transfers.length === 0) {
+    ws3.addRow(['No matched interbank transfers detected.', ...Array(NUM_COLS - 1).fill('')]);
+    ws3.mergeCells(`A2:K2`);
     const cell = ws3.getCell('A2');
-    cell.value     = 'No matched transfers detected.';
+    cell.value     = 'No matched interbank transfers detected.';
     cell.font      = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF888888' } };
     cell.alignment = { horizontal: 'center', vertical: 'middle' };
     ws3.getRow(2).height = 24;
   } else {
     const fmtDate = (d) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    matches.forEach((m, idx) => {
-      const rowBg  = idx % 2 === 0 ? 'FFFFFFFF' : 'FFDCE6F1';
-      const sameDayBg = 'FFE2EFDA'; // soft green for Same Day
-      const nextDayBg = 'FFFFF2CC'; // soft yellow for Next Day
-      const r = ws3.addRow([m.fromAccount, m.toAccount, m.amount, fmtDate(m.debitDate), fmtDate(m.creditDate), m.matchType]);
+
+    // Color maps
+    const matchBg   = { 'Same Day': 'FFE2EFDA', 'Next Day': 'FFFFF2CC', 'Not Transfer': 'FFFCE4D6' };
+    const confBg    = { 'High': 'FFE2EFDA', 'Medium': 'FFFFF2CC', 'Low': 'FFFCE4D6' };
+    const verifyBg  = { true: 'FFE2EFDA', false: 'FFFCE4D6' };
+
+    transfers.forEach((m, idx) => {
+      const rowBg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFDCE6F1';
+      const r = ws3.addRow([
+        m.fromAccount,
+        m.toAccount,
+        m.amount,
+        fmtDate(m.debitDate),
+        fmtDate(m.creditDate),
+        m.debitDesc  || '',
+        m.creditDesc || '',
+        m.is_transfer ? '✅ Transfer' : '❌ Not Transfer',
+        m.match_type  || '',
+        m.confidence  || '',
+        m.reason      || '',
+      ]);
       r.height = 20;
       r.eachCell((cell, colNum) => {
-        const isMatchCol = colNum === 6;
-        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: isMatchCol ? (m.matchType === 'Same Day' ? sameDayBg : nextDayBg) : rowBg } };
-        cell.font      = { name: 'Arial', size: 10, bold: isMatchCol };
-        cell.alignment = { vertical: 'middle', horizontal: colNum === 3 ? 'right' : 'left' };
+        let bg = rowBg;
+        if (colNum === 3)  cell.numFmt = '$#,##0.00';
+        if (colNum === 8)  bg = verifyBg[String(m.is_transfer)] || rowBg;
+        if (colNum === 9)  bg = matchBg[m.match_type]  || rowBg;
+        if (colNum === 10) bg = confBg[m.confidence]   || rowBg;
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.font      = { name: 'Arial', size: 10, bold: [8, 9, 10].includes(colNum) };
+        cell.alignment = { vertical: 'middle', horizontal: colNum === 3 ? 'right' : 'left', wrapText: [6, 7, 11].includes(colNum) };
         cell.border    = { top: { style: 'thin', color: { argb: 'FFD0D0D0' } }, bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } }, left: { style: 'thin', color: { argb: 'FFD0D0D0' } }, right: { style: 'thin', color: { argb: 'FFD0D0D0' } } };
-        if (colNum === 3) cell.numFmt = '$#,##0.00';
       });
     });
 
-    // Summary row at bottom
+    // Summary row
     ws3.addRow([]);
-    const totalRow = ws3.addRow([`${matches.length} transfer(s) matched`, '', matches.reduce((s, m) => s + m.amount, 0), '', '', '']);
-    totalRow.height = 22;
-    const tAmt = totalRow.getCell(3);
-    tAmt.numFmt = '$#,##0.00';
+    const totalAmt = transfers.reduce((s, m) => s + m.amount, 0);
+    const summaryRow = ws3.addRow([`${transfers.length} transfer(s) verified by Claude AI`, '', totalAmt, '', '', '', '', '', '', '', '']);
+    summaryRow.height = 22;
+    summaryRow.getCell(3).numFmt = '$#,##0.00';
     [1, 3].forEach(c => {
-      const cell = totalRow.getCell(c);
+      const cell = summaryRow.getCell(c);
       cell.font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF002060' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
       cell.alignment = { vertical: 'middle', horizontal: c === 3 ? 'right' : 'left' };
@@ -258,8 +389,8 @@ function addInterbankSheet(wb, matches) {
   }
 
   WIDTHS.forEach((w, i) => { ws3.getColumn(i + 1).width = w; });
-  ws3.views     = [{ state: 'frozen', xSplit: 0, ySplit: 1, activeCell: 'A2' }];
-  ws3.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLS.length } };
+  ws3.views      = [{ state: 'frozen', xSplit: 0, ySplit: 1, activeCell: 'A2' }];
+  ws3.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: NUM_COLS } };
 }
 
 // ─── CLAUDE: COLUMN DETECTION ─────────────────────────────────────────────────
@@ -548,9 +679,21 @@ export async function POST(req) {
     const accounts   = Object.keys(pivot).sort();
     const grandTotal = accounts.reduce((s, acc) => s + monthYears.reduce((t, my) => t + (pivot[acc][my] || 0), 0), 0);
 
-    // ── Detect debit/credit columns & match interbank transfers ─────────────────
+    // ── Detect debit/credit/description columns ──────────────────────────────────
     const { debitCol, creditCol } = detectDebitCreditCols(headers);
-    const matches = matchInterbankTransfers(rows, colMap, debitCol, creditCol);
+    const descCol = detectDescriptionCol(headers);
+
+    // ── Collect candidates (same amount, different accounts, ≤3 day window) ──────
+    const candidates = collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol);
+
+    // ── Claude Call 3: Verify each candidate pair ─────────────────────────────────
+    let matches = [];
+    try {
+      matches = await verifyTransfersWithClaude(candidates);
+    } catch (e) {
+      // If Claude verification fails, fall back to raw candidates with unknown verdict
+      matches = candidates.map(c => ({ ...c, is_transfer: false, match_type: 'Unknown', confidence: 'Low', reason: 'AI verification failed: ' + e.message }));
+    }
 
     // ── Claude Call 2: Generate insights ──────────────────────────────────────
     let insights = '';
@@ -576,4 +719,5 @@ export async function POST(req) {
     console.error('[transaction-analysis]', err);
     return NextResponse.json({ error: err.message || 'Internal server error.' }, { status: 500 });
   }
+
 }
