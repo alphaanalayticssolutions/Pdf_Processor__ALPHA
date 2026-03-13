@@ -268,45 +268,62 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
   return candidates;
 }
 
-// ─── CLAUDE: VERIFY INTERBANK TRANSFERS ──────────────────────────────────────
+// ─── CLAUDE: VERIFY INTERBANK TRANSFERS (batched) ────────────────────────────
 async function verifyTransfersWithClaude(candidates) {
   if (candidates.length === 0) return [];
 
   const fmtDate = (d) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  const BATCH_SIZE = 50; // keep each prompt well within context + response limits
+  const allVerdicts = [];
 
-  const pairs = candidates.map((c, idx) => ({
-    index: idx,
-    from_account:   c.fromAccount,
-    to_account:     c.toAccount,
-    amount:         `$${c.amount.toFixed(2)}`,
-    debit_date:     fmtDate(c.debitDate),
-    credit_date:    fmtDate(c.creditDate),
-    debit_desc:     c.debitDesc || '(no description)',
-    credit_desc:    c.creditDesc || '(no description)',
-  }));
+  for (let batchStart = 0; batchStart < candidates.length; batchStart += BATCH_SIZE) {
+    const batch = candidates.slice(batchStart, batchStart + BATCH_SIZE);
 
-  const prompt = TRANSFER_VERIFICATION_PROMPT.replace('{PAIRS}', JSON.stringify(pairs, null, 2));
+    const pairs = batch.map((c, idx) => ({
+      index:        batchStart + idx,
+      from_account: c.fromAccount,
+      to_account:   c.toAccount,
+      amount:       `$${c.amount.toFixed(2)}`,
+      debit_date:   fmtDate(c.debitDate),
+      credit_date:  fmtDate(c.creditDate),
+      debit_desc:   c.debitDesc  || '(no description)',
+      credit_desc:  c.creditDesc || '(no description)',
+    }));
 
-  const msg = await anthropic.messages.create({
-    model: 'claude-haiku-4-5',
-    max_tokens: 2000,
-    messages: [{ role: 'user', content: prompt }],
-  });
+    const prompt = TRANSFER_VERIFICATION_PROMPT.replace('{PAIRS}', JSON.stringify(pairs, null, 2));
 
-  const text = (msg.content[0]?.text || '').replace(/```json|```/g, '').trim();
-  let verdicts;
-  try {
-    verdicts = JSON.parse(text);
-  } catch {
-    // If Claude response broken, default all to unverified
-    verdicts = candidates.map(() => ({ is_transfer: false, match_type: 'Unknown', confidence: 'Low', reason: 'AI verification unavailable.' }));
+    let batchVerdicts;
+    try {
+      const msg = await anthropic.messages.create({
+        model:      'claude-haiku-4-5',
+        max_tokens: 4000, // ~50 pairs × ~60 tokens per verdict = ~3000 tokens needed
+        messages:   [{ role: 'user', content: prompt }],
+      });
+      const text = (msg.content[0]?.text || '').replace(/```json|```/g, '').trim();
+      batchVerdicts = JSON.parse(text);
+    } catch {
+      // Batch failed — default all in batch to low-confidence unverified
+      batchVerdicts = batch.map(() => ({
+        is_transfer: false,
+        match_type:  'Unknown',
+        confidence:  'Low',
+        reason:      'AI verification unavailable for this batch.',
+      }));
+    }
+
+    // Ensure we have one verdict per candidate in the batch
+    batch.forEach((_, i) => {
+      allVerdicts.push(batchVerdicts[i] || {
+        is_transfer: false,
+        match_type:  'Unknown',
+        confidence:  'Low',
+        reason:      'No verdict returned.',
+      });
+    });
   }
 
   // Merge verdicts back into candidates
-  return candidates.map((c, idx) => {
-    const v = verdicts[idx] || { is_transfer: false, match_type: 'Unknown', confidence: 'Low', reason: 'No verdict returned.' };
-    return { ...c, ...v };
-  });
+  return candidates.map((c, idx) => ({ ...c, ...allVerdicts[idx] }));
 }
 
 // ─── TAB 3: MATCHED INTERBANK TRANSFERS ───────────────────────────────────────
@@ -327,9 +344,12 @@ function addInterbankSheet(wb, verified) {
     cell.border    = { top: { style: 'thin', color: { argb: 'FFB0B0B0' } }, bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } }, left: { style: 'thin', color: { argb: 'FFB0B0B0' } }, right: { style: 'thin', color: { argb: 'FFB0B0B0' } } };
   });
 
-  const transfers = verified.filter(v => v.is_transfer);
+  // Show ALL candidates so user can see Claude's full verdict in Excel and filter themselves
+  // Sorted: confirmed transfers first, then uncertain, then non-transfers
+  const sortOrder = { true: 0, false: 1 };
+  const transfers = [...verified].sort((a, b) => (sortOrder[String(a.is_transfer)] ?? 1) - (sortOrder[String(b.is_transfer)] ?? 1));
 
-  if (transfers.length === 0) {
+  if (verified.length === 0) {
     ws3.addRow(['No matched interbank transfers detected.', ...Array(NUM_COLS - 1).fill('')]);
     ws3.mergeCells(`A2:K2`);
     const cell = ws3.getCell('A2');
@@ -377,7 +397,7 @@ function addInterbankSheet(wb, verified) {
     // Summary row
     ws3.addRow([]);
     const totalAmt = transfers.reduce((s, m) => s + m.amount, 0);
-    const summaryRow = ws3.addRow([`${transfers.length} transfer(s) verified by Claude AI`, '', totalAmt, '', '', '', '', '', '', '', '']);
+    const summaryRow = ws3.addRow([`${transfers.filter(t => t.is_transfer).length} confirmed transfer(s) | ${transfers.filter(t => !t.is_transfer).length} non-matches | Claude AI verified`, '', totalAmt, '', '', '', '', '', '', '', '']);
     summaryRow.height = 22;
     summaryRow.getCell(3).numFmt = '$#,##0.00';
     [1, 3].forEach(c => {
@@ -719,5 +739,4 @@ export async function POST(req) {
     console.error('[transaction-analysis]', err);
     return NextResponse.json({ error: err.message || 'Internal server error.' }, { status: 500 });
   }
-
 }
