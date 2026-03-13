@@ -123,6 +123,145 @@ function heatmapARGB(value, max) {
   return `FF${hex(r)}${hex(g)}${hex(b)}`;
 }
 
+// ─── DEBIT / CREDIT COLUMN DETECTOR (heuristic, no AI needed) ────────────────
+function detectDebitCreditCols(headers) {
+  const lower = headers.map(h => h.toLowerCase().trim());
+  const find = (keywords) => {
+    const idx = lower.findIndex(h => keywords.some(k => h === k || h === k + ' amount' || h === k + '($)'));
+    if (idx !== -1) return headers[idx];
+    const idx2 = lower.findIndex(h => keywords.some(k => h.includes(k)));
+    return idx2 !== -1 ? headers[idx2] : null;
+  };
+  return {
+    debitCol:  find(['debit']),
+    creditCol: find(['credit']),
+  };
+}
+
+// ─── INTERBANK TRANSFER MATCHER ───────────────────────────────────────────────
+function matchInterbankTransfers(rows, colMap, debitCol, creditCol) {
+  const debits  = [];
+  const credits = [];
+
+  for (const row of rows) {
+    const account = String(row[colMap.account_col] ?? '').trim();
+    if (!account) continue;
+    const date = parseDate(row[colMap.date_col]);
+    if (!date) continue;
+
+    const parseAmt = (v) => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = parseFloat(String(v).replace(/[$,]/g, ''));
+      return isNaN(n) ? null : n;
+    };
+
+    if (debitCol && creditCol) {
+      const d = parseAmt(row[debitCol]);
+      const c = parseAmt(row[creditCol]);
+      if (d && d > 0) debits.push({ account, date, amount: Math.round(d * 100) / 100 });
+      if (c && c > 0) credits.push({ account, date, amount: Math.round(c * 100) / 100 });
+    } else if (colMap.amount_col) {
+      const a = parseAmt(row[colMap.amount_col]);
+      if (a === null) continue;
+      if (a < 0) debits.push({ account, date, amount: Math.round(Math.abs(a) * 100) / 100 });
+      else if (a > 0) credits.push({ account, date, amount: Math.round(a * 100) / 100 });
+    }
+  }
+
+  const matches = [];
+  const usedCredits = new Set();
+
+  // For each debit, find first matching credit in a different account on same/next day
+  for (const debit of debits) {
+    const d0 = new Date(debit.date); d0.setHours(0, 0, 0, 0);
+    for (let i = 0; i < credits.length; i++) {
+      if (usedCredits.has(i)) continue;
+      const credit = credits[i];
+      if (credit.account === debit.account) continue;
+      if (credit.amount !== debit.amount) continue;
+      const c0 = new Date(credit.date); c0.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((c0 - d0) / 86400000);
+      if (diffDays === 0 || diffDays === 1) {
+        matches.push({
+          fromAccount: debit.account,
+          toAccount:   credit.account,
+          amount:      debit.amount,
+          debitDate:   debit.date,
+          creditDate:  credit.date,
+          matchType:   diffDays === 0 ? 'Same Day' : 'Next Day',
+        });
+        usedCredits.add(i);
+        break;
+      }
+    }
+  }
+
+  matches.sort((a, b) => a.debitDate - b.debitDate);
+  return matches;
+}
+
+// ─── TAB 3: MATCHED INTERBANK TRANSFERS ───────────────────────────────────────
+function addInterbankSheet(wb, matches) {
+  const ws3 = wb.addWorksheet('Matched Interbank Transfers');
+  const COLS = ['From Account', 'To Account', 'Amount ($)', 'Debit Date', 'Credit Date', 'Match Type'];
+  const WIDTHS = [28, 28, 18, 18, 18, 14];
+
+  // Header row — navy
+  const hdrRow = ws3.addRow(COLS);
+  hdrRow.height = 28;
+  hdrRow.eachCell(cell => {
+    cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF002060' } };
+    cell.font      = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border    = { top: { style: 'thin', color: { argb: 'FFB0B0B0' } }, bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } }, left: { style: 'thin', color: { argb: 'FFB0B0B0' } }, right: { style: 'thin', color: { argb: 'FFB0B0B0' } } };
+  });
+
+  if (matches.length === 0) {
+    // Merge A2:F2 and show message
+    ws3.addRow(['No matched transfers detected.', '', '', '', '', '']);
+    ws3.mergeCells('A2:F2');
+    const cell = ws3.getCell('A2');
+    cell.value     = 'No matched transfers detected.';
+    cell.font      = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF888888' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws3.getRow(2).height = 24;
+  } else {
+    const fmtDate = (d) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    matches.forEach((m, idx) => {
+      const rowBg  = idx % 2 === 0 ? 'FFFFFFFF' : 'FFDCE6F1';
+      const sameDayBg = 'FFE2EFDA'; // soft green for Same Day
+      const nextDayBg = 'FFFFF2CC'; // soft yellow for Next Day
+      const r = ws3.addRow([m.fromAccount, m.toAccount, m.amount, fmtDate(m.debitDate), fmtDate(m.creditDate), m.matchType]);
+      r.height = 20;
+      r.eachCell((cell, colNum) => {
+        const isMatchCol = colNum === 6;
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: isMatchCol ? (m.matchType === 'Same Day' ? sameDayBg : nextDayBg) : rowBg } };
+        cell.font      = { name: 'Arial', size: 10, bold: isMatchCol };
+        cell.alignment = { vertical: 'middle', horizontal: colNum === 3 ? 'right' : 'left' };
+        cell.border    = { top: { style: 'thin', color: { argb: 'FFD0D0D0' } }, bottom: { style: 'thin', color: { argb: 'FFD0D0D0' } }, left: { style: 'thin', color: { argb: 'FFD0D0D0' } }, right: { style: 'thin', color: { argb: 'FFD0D0D0' } } };
+        if (colNum === 3) cell.numFmt = '$#,##0.00';
+      });
+    });
+
+    // Summary row at bottom
+    ws3.addRow([]);
+    const totalRow = ws3.addRow([`${matches.length} transfer(s) matched`, '', matches.reduce((s, m) => s + m.amount, 0), '', '', '']);
+    totalRow.height = 22;
+    const tAmt = totalRow.getCell(3);
+    tAmt.numFmt = '$#,##0.00';
+    [1, 3].forEach(c => {
+      const cell = totalRow.getCell(c);
+      cell.font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF002060' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+      cell.alignment = { vertical: 'middle', horizontal: c === 3 ? 'right' : 'left' };
+    });
+  }
+
+  WIDTHS.forEach((w, i) => { ws3.getColumn(i + 1).width = w; });
+  ws3.views     = [{ state: 'frozen', xSplit: 0, ySplit: 1, activeCell: 'A2' }];
+  ws3.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLS.length } };
+}
+
 // ─── CLAUDE: COLUMN DETECTION ─────────────────────────────────────────────────
 async function detectColumnsWithClaude(headers) {
   const prompt = COLUMN_DETECTION_PROMPT.replace('{HEADERS}', JSON.stringify(headers));
@@ -169,7 +308,7 @@ async function generateInsightsWithClaude(pivot, monthYears, accounts, grandTota
 }
 
 // ─── BUILD EXCEL ──────────────────────────────────────────────────────────────
-async function buildExcel(pivot, monthYears, accounts, insights, grandTotal) {
+async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, matches) {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Alpha Analytics Solutions';
   wb.created = new Date();
@@ -302,6 +441,9 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal) {
 
   ws2.getColumn('A').width = 100;
 
+  // ── TAB 3: Matched Interbank Transfers ────────────────────────────────────────
+  addInterbankSheet(wb, matches);
+
   return wb;
 }
 
@@ -406,6 +548,10 @@ export async function POST(req) {
     const accounts   = Object.keys(pivot).sort();
     const grandTotal = accounts.reduce((s, acc) => s + monthYears.reduce((t, my) => t + (pivot[acc][my] || 0), 0), 0);
 
+    // ── Detect debit/credit columns & match interbank transfers ─────────────────
+    const { debitCol, creditCol } = detectDebitCreditCols(headers);
+    const matches = matchInterbankTransfers(rows, colMap, debitCol, creditCol);
+
     // ── Claude Call 2: Generate insights ──────────────────────────────────────
     let insights = '';
     try {
@@ -415,7 +561,7 @@ export async function POST(req) {
     }
 
     // ── Build & return Excel ──────────────────────────────────────────────────
-    const wb = await buildExcel(pivot, monthYears, accounts, insights, grandTotal);
+    const wb = await buildExcel(pivot, monthYears, accounts, insights, grandTotal, matches);
     const outBuffer = await wb.xlsx.writeBuffer();
 
     return new NextResponse(outBuffer, {
