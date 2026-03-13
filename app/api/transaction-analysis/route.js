@@ -112,11 +112,13 @@ function monthYearSortKey(label) {
 
 // ─── HEATMAP COLOR ─────────────────────────────────────────────────────────────
 function heatmapARGB(value, max) {
-  if (max === 0 || value === 0) return 'FFFFFFFF';
+  if (max === 0 || value === 0) return 'FFFFFFFF'; // 0 = pure white
   const ratio = value / max;
-  const r = Math.round(255 - ratio * (255 - 31));
-  const g = Math.round(255 - ratio * (255 - 56));
-  const b = Math.round(255 - ratio * (255 - 100));
+  // Non-zero: light blue (190,210,235) → dark navy (31,56,100)
+  // Even value=1 shows visible colour instead of near-white
+  const r = Math.round(190 + ratio * (31 - 190));
+  const g = Math.round(210 + ratio * (56 - 210));
+  const b = Math.round(235 + ratio * (100 - 235));
   const hex = n => n.toString(16).padStart(2, '0').toUpperCase();
   return `FF${hex(r)}${hex(g)}${hex(b)}`;
 }
