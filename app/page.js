@@ -236,11 +236,11 @@ function TransactionAnalysisTool({ onBack }) {
   const someChecked = allFiles.some(f => selected[f.name]);
 
   const handleAnalyse = async () => {
-    if (selectedFiles.length === 0) { setError('Please select at least one file.'); return; }
+    if (selectedFiles.length === 0) { setError('Please select at least one file from the list.'); return; }
     setLoading(true); setError(''); setResult(null);
     try {
       const formData = new FormData();
-      formData.append('file', selectedFiles[0]);
+      selectedFiles.forEach(f => formData.append('files', f));
       const res = await fetch('/api/transaction-analysis', { method: 'POST', body: formData });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
