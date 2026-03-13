@@ -397,19 +397,20 @@ function addInterbankSheet(wb, verified) {
     ws3.addRow([]);
     const confirmed = transfers.filter(t => t.is_transfer).length;
     const nonMatch  = transfers.filter(t => !t.is_transfer).length;
-    const totalAmt  = transfers.filter(t => t.is_transfer).reduce((s, m) => s + m.amount, 0);
+    const totalAmt  = Math.round(transfers.filter(t => t.is_transfer).reduce((s, m) => s + m.amount, 0) * 100) / 100;
     const summaryRow = ws3.addRow([
       `✅ ${confirmed} confirmed transfer(s)   ❌ ${nonMatch} non-match(es)   🤖 Claude AI verified`,
       '', totalAmt, '', '', '', '', '', '', '', ''
     ]);
     summaryRow.height = 22;
-    summaryRow.getCell(3).numFmt = '$#,##0.00';
-    [1, 3].forEach(c => {
-      const cell = summaryRow.getCell(c);
-      cell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF002060' } };
+    // Style all summary cells
+    summaryRow.eachCell((cell, colNum) => {
       cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
-      cell.alignment = { vertical: 'middle', horizontal: c === 3 ? 'right' : 'left' };
+      cell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF002060' } };
+      cell.alignment = { vertical: 'middle', horizontal: colNum === 3 ? 'right' : 'left' };
+      cell.border    = { top: { style: 'medium', color: { argb: 'FF002060' } }, bottom: { style: 'medium', color: { argb: 'FF002060' } }, left: { style: 'thin', color: { argb: 'FFD0D0D0' } }, right: { style: 'thin', color: { argb: 'FFD0D0D0' } } };
     });
+    summaryRow.getCell(3).numFmt = '$#,##0.00';
   }
 
   WIDTHS.forEach((w, i) => { ws3.getColumn(i + 1).width = w; });
