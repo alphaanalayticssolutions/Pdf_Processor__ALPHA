@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
 import Anthropic from '@anthropic-ai/sdk';
 
-export const maxDuration = 60;
+export const maxDuration = 300; // Vercel Pro supports up to 300s
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -274,13 +274,16 @@ async function verifyTransfersWithClaude(candidates) {
 
   const fmtDate = (d) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   const BATCH_SIZE = 50; // keep each prompt well within context + response limits
-  const allVerdicts = [];
-
+  // Build all batches upfront
+  const batches = [];
   for (let batchStart = 0; batchStart < candidates.length; batchStart += BATCH_SIZE) {
-    const batch = candidates.slice(batchStart, batchStart + BATCH_SIZE);
+    batches.push({ start: batchStart, items: candidates.slice(batchStart, batchStart + BATCH_SIZE) });
+  }
 
-    const pairs = batch.map((c, idx) => ({
-      index:        batchStart + idx,
+  // Run all batch Claude calls in PARALLEL — cuts total time from ~70s to ~15s
+  const batchResults = await Promise.all(batches.map(async ({ start, items }) => {
+    const pairs = items.map((c, idx) => ({
+      index:        start + idx,
       from_account: c.fromAccount,
       to_account:   c.toAccount,
       amount:       `$${c.amount.toFixed(2)}`,
@@ -292,35 +295,26 @@ async function verifyTransfersWithClaude(candidates) {
 
     const prompt = TRANSFER_VERIFICATION_PROMPT.replace('{PAIRS}', JSON.stringify(pairs, null, 2));
 
-    let batchVerdicts;
     try {
       const msg = await anthropic.messages.create({
         model:      'claude-haiku-4-5',
-        max_tokens: 4000, // ~50 pairs × ~60 tokens per verdict = ~3000 tokens needed
+        max_tokens: 4000,
         messages:   [{ role: 'user', content: prompt }],
       });
       const text = (msg.content[0]?.text || '').replace(/```json|```/g, '').trim();
-      batchVerdicts = JSON.parse(text);
+      return JSON.parse(text);
     } catch {
-      // Batch failed — default all in batch to low-confidence unverified
-      batchVerdicts = batch.map(() => ({
+      return items.map(() => ({
         is_transfer: false,
         match_type:  'Unknown',
         confidence:  'Low',
         reason:      'AI verification unavailable for this batch.',
       }));
     }
+  }));
 
-    // Ensure we have one verdict per candidate in the batch
-    batch.forEach((_, i) => {
-      allVerdicts.push(batchVerdicts[i] || {
-        is_transfer: false,
-        match_type:  'Unknown',
-        confidence:  'Low',
-        reason:      'No verdict returned.',
-      });
-    });
-  }
+  // Flatten results in order
+  const allVerdicts = batchResults.flat();
 
   // Merge verdicts back into candidates
   return candidates.map((c, idx) => ({ ...c, ...allVerdicts[idx] }));
