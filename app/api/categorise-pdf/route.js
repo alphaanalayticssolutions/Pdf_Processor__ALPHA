@@ -2,14 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import JSZip from 'jszip';
 
 // Increase body size limit for this API route (Next.js App Router)
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '50mb',
-    },
-    responseLimit: '50mb',
-  },
-};
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
