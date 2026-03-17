@@ -10,6 +10,7 @@ const client = new Anthropic();
 
 // ─────────────────────────────────────────────────────────────
 // LAYER 1: Rule-Based Checks
+// Fast, free, deterministic. No AI cost.
 // ─────────────────────────────────────────────────────────────
 function runRuleChecks(toolName, toolOutput) {
   const issues = [];
@@ -21,6 +22,7 @@ function runRuleChecks(toolName, toolOutput) {
     const summary = toolOutput.summary || {};
     const metadata = toolOutput.metadata || {};
 
+    // Balance math check
     const { openingBalance, closingBalance, totalCredits, totalDebits } = summary;
     if (
       openingBalance !== undefined &&
@@ -31,15 +33,17 @@ function runRuleChecks(toolName, toolOutput) {
       const expected = openingBalance + totalCredits - totalDebits;
       const diff = Math.abs(expected - closingBalance);
       if (diff > 1) {
-        issues.push(`Balance mismatch: expected ${expected.toFixed(2)}, got ${closingBalance.toFixed(2)} (difference: ${diff.toFixed(2)})`);
+        issues.push(`Balance mismatch: expected $${expected.toFixed(2)}, got $${closingBalance.toFixed(2)} (difference: $${diff.toFixed(2)})`);
       }
     }
 
+    // Missing descriptions
     const missingDesc = transactions.filter((t) => !t.description || t.description.trim() === "");
     if (missingDesc.length > 0) {
       warnings.push(`${missingDesc.length} transaction(s) have missing descriptions`);
     }
 
+    // Zero amount transactions
     const zeroTx = transactions.filter(
       (t) =>
         (t.debit === 0 || t.debit === null || t.debit === undefined) &&
@@ -49,6 +53,7 @@ function runRuleChecks(toolName, toolOutput) {
       issues.push(`${zeroTx.length} transaction(s) have zero amounts for both debit and credit`);
     }
 
+    // Duplicate transactions
     const seen = new Map();
     let duplicateCount = 0;
     transactions.forEach((t) => {
@@ -60,9 +65,19 @@ function runRuleChecks(toolName, toolOutput) {
       warnings.push(`${duplicateCount} possible duplicate transaction(s) detected (same date, amount, description)`);
     }
 
+    // Page coverage
     const pageCount = metadata.pageCount;
     if (pageCount && transactions.length < pageCount * 5) {
-      warnings.push(`Low transaction count: ${transactions.length} transactions for ${pageCount} pages. Some pages may not have been extracted.`);
+      warnings.push(`Low transaction count: ${transactions.length} transactions for ${pageCount} pages — possible extraction gap`);
+    }
+
+    // Suspiciously round amounts (possible placeholder values)
+    const roundAmounts = transactions.filter((t) => {
+      const amt = t.debit || t.credit || 0;
+      return amt > 0 && amt % 1000 === 0 && amt > 10000;
+    });
+    if (roundAmounts.length > 3) {
+      warnings.push(`${roundAmounts.length} transactions have suspiciously round amounts (multiples of $1000) — verify these are real`);
     }
   }
 
@@ -77,17 +92,17 @@ function runRuleChecks(toolName, toolOutput) {
 
     const unnamedSplits = splits.filter((s) => !s.name || s.name.trim() === "");
     if (unnamedSplits.length > 0) {
-      warnings.push(`${unnamedSplits.length} split(s) have no name assigned.`);
+      warnings.push(`${unnamedSplits.length} split(s) have no name assigned`);
     }
 
-    const emptySplits = splits.filter((s) => s.pageCount === 0 || s.pages === 0);
+    const emptySplits = splits.filter((s) => (s.pageCount || s.pages || 0) === 0);
     if (emptySplits.length > 0) {
-      issues.push(`${emptySplits.length} split(s) have zero pages — possible split error.`);
+      issues.push(`${emptySplits.length} split(s) have zero pages — possible split error`);
     }
 
     const splitPageTotal = splits.reduce((sum, s) => sum + (s.pageCount || s.pages || 0), 0);
     if (totalPages > 0 && Math.abs(splitPageTotal - totalPages) > 2) {
-      warnings.push(`Page count mismatch: splits account for ${splitPageTotal} pages but PDF has ${totalPages} pages.`);
+      warnings.push(`Page count mismatch: splits account for ${splitPageTotal} pages but PDF has ${totalPages} pages`);
     }
   }
 
@@ -95,25 +110,41 @@ function runRuleChecks(toolName, toolOutput) {
   if (toolName === "categorisation") {
     const files = toolOutput.files || [];
 
-    if (files.length > 0) {
-      const lowConfidence = files.filter((f) => f.confidence !== undefined && f.confidence < 0.5);
+    if (files.length === 0) {
+      issues.push("No files found in categorisation output.");
+    } else {
+      // Low confidence check
+      const lowConfidence = files.filter(
+        (f) => f.confidence !== undefined && f.confidence < 0.5
+      );
       const lowPercent = (lowConfidence.length / files.length) * 100;
       if (lowPercent > 20) {
-        warnings.push(`${lowPercent.toFixed(0)}% of files have low confidence scores (above 20% threshold)`);
+        warnings.push(`${lowPercent.toFixed(0)}% of files have low confidence scores (threshold: 20%)`);
       }
 
-      const miscFiles = files.filter((f) => f.folder && f.folder.toLowerCase().includes("miscellaneous"));
+      // Miscellaneous overflow
+      const miscFiles = files.filter(
+        (f) => f.folder && f.folder.toLowerCase().includes("miscellaneous")
+      );
       const miscPercent = (miscFiles.length / files.length) * 100;
       if (miscPercent > 10) {
-        warnings.push(`${miscPercent.toFixed(0)}% of files placed in Miscellaneous folder (above 10% threshold)`);
+        warnings.push(`${miscPercent.toFixed(0)}% of files placed in Miscellaneous folder (threshold: 10%)`);
       }
 
+      // No folder assigned
       const noFolder = files.filter((f) => !f.folder || f.folder.trim() === "");
       if (noFolder.length > 0) {
-        issues.push(`${noFolder.length} file(s) have no folder assigned.`);
+        issues.push(`${noFolder.length} file(s) have no folder assigned`);
       }
-    } else {
-      issues.push("No files found in categorisation output.");
+
+      // Check confidence field format — HIGH/MEDIUM/LOW vs numeric
+      const lowConfidenceStr = files.filter(
+        (f) => f.confidence === "LOW"
+      );
+      const lowStrPercent = (lowConfidenceStr.length / files.length) * 100;
+      if (lowStrPercent > 20) {
+        warnings.push(`${lowStrPercent.toFixed(0)}% of files marked LOW confidence by AI categoriser`);
+      }
     }
   }
 
@@ -125,13 +156,13 @@ function runRuleChecks(toolName, toolOutput) {
 
     if (total > 0 && stamped < total) {
       const unstamped = total - stamped;
-      warnings.push(`${unstamped} file(s) out of ${total} were not stamped.`);
+      warnings.push(`${unstamped} file(s) out of ${total} were not stamped`);
     }
 
     const batesNumbers = files.map((f) => f.batesNumber || f.startBates).filter(Boolean);
     const uniqueBates = new Set(batesNumbers);
     if (uniqueBates.size < batesNumbers.length) {
-      issues.push("Duplicate Bates numbers detected. Numbering may be incorrect.");
+      issues.push("Duplicate Bates numbers detected — numbering may be incorrect");
     }
 
     const nums = batesNumbers
@@ -140,7 +171,7 @@ function runRuleChecks(toolName, toolOutput) {
       .sort((a, b) => a - b);
     for (let i = 1; i < nums.length; i++) {
       if (nums[i] - nums[i - 1] > 1) {
-        warnings.push(`Gap detected in Bates sequence between ${nums[i - 1]} and ${nums[i]}.`);
+        warnings.push(`Gap in Bates sequence between ${nums[i - 1]} and ${nums[i]}`);
         break;
       }
     }
@@ -149,15 +180,22 @@ function runRuleChecks(toolName, toolOutput) {
   // ── 5. TRACKER ──
   if (toolName === "tracker") {
     const gaps = toolOutput.gaps || 0;
-    const totalMonths = toolOutput.totalMonths || 1;
-    const gapPercent = (gaps / totalMonths) * 100;
+    const totalMonths = toolOutput.totalMonths || 0;
+    const totalAccounts = toolOutput.totalAccounts || 0;
 
     if (totalMonths === 0) {
-      issues.push("Tracker has no months of data. Output may be empty.");
-    } else if (gapPercent > 30) {
-      issues.push(`High gap rate: ${gaps} missing months out of ${totalMonths} total months (${gapPercent.toFixed(0)}%)`);
-    } else if (gaps > 0) {
-      warnings.push(`${gaps} gap(s) found in tracker — marked as (?) in output`);
+      issues.push("Tracker has no months of data — output may be empty");
+    } else {
+      const gapPercent = (gaps / totalMonths) * 100;
+      if (gapPercent > 30) {
+        issues.push(`High gap rate: ${gaps} missing months out of ${totalMonths} total (${gapPercent.toFixed(0)}%)`);
+      } else if (gaps > 0) {
+        warnings.push(`${gaps} gap(s) found in tracker — marked as (?) — statements missing for these periods`);
+      }
+    }
+
+    if (totalAccounts === 0) {
+      issues.push("No accounts found in tracker output");
     }
   }
 
@@ -167,20 +205,27 @@ function runRuleChecks(toolName, toolOutput) {
     const total = descriptions.length;
 
     if (total === 0) {
-      issues.push("No descriptions found in output.");
-    }
+      issues.push("No descriptions found in output");
+    } else {
+      const uncategorised = descriptions.filter(
+        (d) =>
+          !d.category ||
+          d.category.trim() === "" ||
+          d.category.toLowerCase() === "uncategorised" ||
+          d.category.toLowerCase() === "uncategorized" ||
+          d.category.toLowerCase() === "other"
+      );
+      const uncatPercent = (uncategorised.length / total) * 100;
+      if (uncatPercent > 15) {
+        warnings.push(`${uncatPercent.toFixed(0)}% of descriptions are uncategorised (threshold: 15%)`);
+      }
 
-    const uncategorised = descriptions.filter(
-      (d) => !d.category || d.category.trim() === "" || d.category.toLowerCase() === "uncategorised"
-    );
-    const uncatPercent = total > 0 ? (uncategorised.length / total) * 100 : 0;
-    if (uncatPercent > 15) {
-      warnings.push(`${uncatPercent.toFixed(0)}% of descriptions are uncategorised (above 15% threshold).`);
-    }
-
-    const lowConf = descriptions.filter((d) => d.confidence !== undefined && d.confidence < 0.4);
-    if (lowConf.length > 0) {
-      warnings.push(`${lowConf.length} description(s) have very low categorisation confidence.`);
+      const lowConf = descriptions.filter(
+        (d) => d.confidence !== undefined && d.confidence < 0.4
+      );
+      if (lowConf.length > 0) {
+        warnings.push(`${lowConf.length} description(s) have very low categorisation confidence`);
+      }
     }
   }
 
@@ -188,15 +233,16 @@ function runRuleChecks(toolName, toolOutput) {
   if (toolName === "transaction-analysis") {
     const accounts = toolOutput.accounts || [];
     const flaggedTransfers = toolOutput.flaggedTransfers || [];
+    const fileCount = toolOutput.fileCount || 0;
 
-    if (accounts.length === 0) {
-      issues.push("No accounts found in transaction analysis output.");
+    if (accounts.length === 0 && fileCount === 0) {
+      warnings.push("No structured account data returned — QC running on file metadata only");
     }
 
     accounts.forEach((acc) => {
       if (acc.maxMonthTx && acc.avgMonthTx && acc.avgMonthTx > 0) {
         if (acc.maxMonthTx > acc.avgMonthTx * 10) {
-          warnings.push(`Account "${acc.name}" has a suspicious spike: ${acc.maxMonthTx} transactions in one month vs average of ${acc.avgMonthTx}`);
+          warnings.push(`Account "${acc.name}" spike detected: ${acc.maxMonthTx} transactions in one month vs avg ${acc.avgMonthTx}`);
         }
       }
 
@@ -208,7 +254,7 @@ function runRuleChecks(toolName, toolOutput) {
           const middleMonths = acc.monthlyData.slice(firstActive, lastActive + 1);
           const zeroMiddle = middleMonths.filter((m) => m.count === 0);
           if (zeroMiddle.length > 0) {
-            warnings.push(`Account "${acc.name}" has ${zeroMiddle.length} month(s) with zero activity in the middle of its active period.`);
+            warnings.push(`Account "${acc.name}" has ${zeroMiddle.length} month(s) with zero activity in middle of active period`);
           }
         }
       }
@@ -224,67 +270,131 @@ function runRuleChecks(toolName, toolOutput) {
 
 // ─────────────────────────────────────────────────────────────
 // LAYER 2: AI Deep Analysis
+// Professional-grade forensic financial QC prompt.
 // ─────────────────────────────────────────────────────────────
 async function runAIAnalysis(toolName, toolOutput, ruleIssues, ruleWarnings) {
-  const outputSample = JSON.stringify(toolOutput).slice(0, 3000);
+  const outputSample = JSON.stringify(toolOutput).slice(0, 4000);
 
-  const systemPrompt = `You are a QC inspector for a legal financial document processing system in India.
+  // Tool-specific context for the AI
+  const toolContext = {
+    "extraction": `You are reviewing bank statement extraction output.
+Key checks:
+- Do opening balance + total credits - total debits = closing balance?
+- Are transaction dates sequential with no impossible jumps?
+- Are there any transactions with amounts that seem like OCR errors (e.g. $1,234,567 when others are under $10,000)?
+- Are descriptions meaningful or do they look truncated/garbled?
+- Is the transaction count reasonable for the number of pages?
+- Are debit/credit columns consistent (not swapped)?`,
 
-Your task is to analyze tool output and detect quality issues that rule-based checks might miss.
+    "splitter": `You are reviewing PDF document splitting output.
+Key checks:
+- Does the number of splits make sense for the document type?
+- Are split names meaningful and correctly assigned?
+- Are page ranges contiguous with no gaps or overlaps?
+- Does the total page count across splits match the original PDF?`,
 
-Focus on:
-- Financial inconsistencies
-- Balance mismatches
-- Missing transactions
-- Duplicate transactions
-- Unusual gaps in dates
-- Extraction errors
+    "categorisation": `You are reviewing legal document categorisation output.
+Key checks:
+- Are documents assigned to the correct legal category based on their names?
+- Are there documents in wrong folders (e.g. a bank statement in Court Filings)?
+- Is the confidence distribution reasonable?
+- Are too many documents in Miscellaneous (catch-all) folder?`,
 
-Scoring guideline:
-90-100 = Excellent output, no issues
-70-89 = Minor warnings only
-40-69 = Multiple issues found
-0-39 = Major errors, re-run recommended
+    "bates-stamp": `You are reviewing Bates stamp numbering output.
+Key checks:
+- Is the Bates sequence continuous with no gaps or duplicates?
+- Were all PDFs in the batch processed?
+- Are any files skipped that should not have been?
+- Is the prefix format consistent across all stamped files?`,
 
-These documents are Indian bank or credit card statements.
-Common transaction types include UPI, NEFT, RTGS, IMPS, ATM withdrawals, POS card payments.
+    "tracker": `You are reviewing a bank/credit card statement tracker output.
+Key checks:
+- Are there gaps (?) in months that should have data?
+- Is the date range continuous and reasonable?
+- Are bank account names normalized consistently?
+- Are all accounts from the input files represented in the tracker?`,
 
-Return ONLY valid JSON. No markdown. No explanation text before or after.
-Return exactly this structure:
+    "desc-categoriser": `You are reviewing transaction description categorisation output.
+Key checks:
+- Are business expense descriptions categorised correctly?
+- Are there descriptions that seem miscategorised (e.g. "APPLE.COM/BILL" as Food instead of Software)?
+- Is the category distribution reasonable for a business?
+- Are any high-frequency descriptions getting wrong categories?`,
+
+    "transaction-analysis": `You are reviewing a transaction pattern analysis output.
+Key checks:
+- Are there accounts with unusually high or low transaction volumes?
+- Are there months with zero activity that look suspicious?
+- Do the file names and metadata suggest the analysis covered all uploaded files?
+- Are there any data quality indicators suggesting the pivot was built incorrectly?`,
+  };
+
+  const context = toolContext[toolName] || "You are reviewing document processing tool output for quality issues.";
+
+  const systemPrompt = `You are a senior forensic financial analyst and document QC specialist.
+You work for a legal services firm that processes financial documents for litigation and compliance cases.
+All documents are international — primarily USD-denominated financial records.
+Transaction types include: wire transfers, ACH payments, checks, credit card charges, bank fees, interest, forex.
+
+Your role is to identify quality issues that automated rule checks cannot detect:
+- Logical inconsistencies in financial data
+- Patterns suggesting extraction errors or OCR failures  
+- Data completeness problems
+- Anomalies that a human reviewer would flag
+- Issues that could cause problems in legal proceedings
+
+${context}
+
+SCORING CRITERIA — be precise and consistent:
+90-100: Clean output, no significant issues, ready for legal use
+75-89:  Minor issues present, usable but warrants review before submission
+55-74:  Multiple issues, requires correction before use
+30-54:  Significant quality problems, re-run recommended
+0-29:   Output is unreliable, do not use without full manual review
+
+CRITICAL RULES:
+- Only flag issues you can actually see evidence of in the data
+- Do not invent problems that aren't there
+- Be specific — name accounts, dates, amounts when flagging issues
+- Keep each issue/warning to one clear sentence
+- Recommendations must be actionable, not generic
+
+Return ONLY valid JSON. No markdown. No text before or after.
+Exact structure required:
 {
-  "aiScore": <number between 0 and 100>,
-  "aiIssues": ["<serious issue>"],
-  "aiWarnings": ["<minor concern>"],
-  "aiRecommendations": ["<actionable recommendation>"],
-  "aiSummary": "<2 to 3 sentence plain English summary>"
+  "aiScore": <integer 0-100>,
+  "aiIssues": ["<specific serious issue with evidence>"],
+  "aiWarnings": ["<specific minor concern with evidence>"],
+  "aiRecommendations": ["<specific actionable step>"],
+  "aiSummary": "<2-3 sentence professional assessment of output quality and readiness for use>"
 }`;
 
-  const userPrompt = `Tool name: ${toolName}
+  const userPrompt = `TOOL: ${toolName}
 
-Issues already found by rule checks: ${JSON.stringify(ruleIssues)}
-Warnings already found by rule checks: ${JSON.stringify(ruleWarnings)}
+RULE-BASED CHECKS ALREADY FOUND:
+Issues: ${JSON.stringify(ruleIssues)}
+Warnings: ${JSON.stringify(ruleWarnings)}
 
-Here is the tool output to inspect:
+TOOL OUTPUT DATA (first 4000 characters):
 ${outputSample}
 
-Check for:
-1. Balance mismatches between opening, closing, credits and debits
-2. Missing or incomplete transactions
-3. Suspicious amounts or unusual patterns
-4. Duplicate transactions
-5. Unusual gaps in dates
-6. Any extraction errors or data quality problems
-7. Anything unusual for Indian bank statements (UPI, NEFT, RTGS, IMPS, ATM, POS)`;
+Perform a deep quality analysis. Look beyond the rule checks above.
+Focus on issues that matter for legal document processing accuracy.
+If the data looks clean and complete, say so — do not manufacture concerns.
+Score honestly based on what you can actually see in the output.`;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 1000,
+    max_tokens: 1200,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
 
   const rawText = response.content[0].text.trim();
-  const parsed = JSON.parse(rawText);
+
+  // Strip any accidental markdown fences
+  const cleaned = rawText.replace(/```json|```/g, "").trim();
+  const parsed = JSON.parse(cleaned);
   return parsed;
 }
 
@@ -297,6 +407,7 @@ function calculateFinalScore(ruleIssues, ruleWarnings, aiScore) {
   ruleScore -= ruleWarnings.length * 5;
   ruleScore = Math.max(0, ruleScore);
 
+  // 60% rule-based weight, 40% AI weight
   const blended = ruleScore * 0.6 + aiScore * 0.4;
   return Math.max(0, Math.min(100, Math.round(blended)));
 }
@@ -322,23 +433,27 @@ export async function POST(req) {
       );
     }
 
+    // Layer 1: Rule checks — instant
     const { issues: ruleIssues, warnings: ruleWarnings } = runRuleChecks(
       toolName,
       { ...toolOutput, metadata }
     );
 
+    // Layer 2: AI analysis — with proper fallback
     let aiResult = {
-      aiScore: 80,
+      aiScore: 75,
       aiIssues: [],
       aiWarnings: [],
-      aiRecommendations: [],
-      aiSummary: "AI analysis could not complete. Rule-based checks were applied.",
+      aiRecommendations: ["Re-run QC once AI analysis is available for deeper insights."],
+      aiSummary: "AI deep analysis could not complete. Rule-based checks were applied. Results reflect automated checks only.",
     };
 
     try {
       aiResult = await runAIAnalysis(toolName, toolOutput, ruleIssues, ruleWarnings);
     } catch (aiError) {
-      console.error("AI analysis failed, using fallback:", aiError.message);
+      console.error("QC AI analysis failed:", aiError.message);
+      // Log what actually failed for debugging
+      console.error("Tool:", toolName, "| Output keys:", Object.keys(toolOutput || {}));
     }
 
     const finalScore = calculateFinalScore(ruleIssues, ruleWarnings, aiResult.aiScore);
@@ -354,17 +469,24 @@ export async function POST(req) {
       warnings: allWarnings,
       recommendations: aiResult.aiRecommendations || [],
       summary: aiResult.aiSummary,
+      meta: {
+        toolName,
+        ruleIssueCount: ruleIssues.length,
+        ruleWarningCount: ruleWarnings.length,
+        aiScore: aiResult.aiScore,
+        timestamp: new Date().toISOString(),
+      },
     });
 
   } catch (err) {
-    console.error("QC Agent error:", err.message);
+    console.error("QC Agent critical error:", err.message);
     return NextResponse.json({
       status: "WARNING",
       score: 50,
       issues: [],
-      warnings: ["QC Agent encountered an unexpected error. Please review output manually."],
-      recommendations: ["Check server logs for details."],
-      summary: "QC could not complete due to an error. Manual review recommended.",
+      warnings: ["QC Agent encountered an unexpected error. Manual review recommended."],
+      recommendations: ["Check server logs for QC Agent error details."],
+      summary: "QC could not complete due to a system error. Please review output manually before use.",
     });
   }
 }

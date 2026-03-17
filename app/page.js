@@ -217,8 +217,13 @@ function TransactionAnalysisTool({ onBack }) {
       valid.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
       return updated;
     });
-    setResult(null); setError('');
-  };
+setResult({
+  url,
+  fileName,
+  fileCount: selectedFiles.length,
+  filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
+});  };
+
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
   const handleFileSelect = (e) => loadFiles(e.target.files);
@@ -343,8 +348,15 @@ function TransactionAnalysisTool({ onBack }) {
             📥 Download Transaction_Analysis.xlsx
           </button>
           {/* QC BADGE — Transaction Analysis */}
-          <QCBadge toolName="transaction-analysis" toolOutput={result} metadata={{}} />
-          <button onClick={handleClear}
+<QCBadge
+  toolName="transaction-analysis"
+  toolOutput={{
+    fileCount: result.fileCount || 0,
+    filesAnalysed: result.filesAnalysed || [],
+    fileName: result.fileName,
+  }}
+  metadata={{}}
+/>          <button onClick={handleClear}
             style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
             ↺ Analyse Another File
           </button>
@@ -504,10 +516,18 @@ function StatementTrackerTool({ onBack }) {
           </button>
           {/* QC BADGE — Tracker */}
           <QCBadge
-            toolName="tracker"
-            toolOutput={{ gaps: result.totalGaps || 0, totalMonths: result.totalMonths || 0 }}
-            metadata={{}}
-          />
+  toolName="tracker"
+  toolOutput={{
+    gaps: result.totalGaps || 0,
+    totalMonths: result.totalMonths || 0,
+    totalAccounts: result.totalAccounts || 0,
+    totalBankAccounts: result.totalBankAccounts || 0,
+    totalCreditCards: result.totalCreditCards || 0,
+    errors: result.errors || [],
+  }}
+  metadata={{}}
+/>
+          
           <button onClick={clearAll}
             style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
             ↺ Upload Another Set
