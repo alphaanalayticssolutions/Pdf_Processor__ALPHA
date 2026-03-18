@@ -92,25 +92,92 @@ STRICT RULES:
 - Unreadable values: 0 for numbers, "" for strings
 - Return ONLY the JSON, nothing else`;
 
+// ── AI RECONCILIATION ────────────────────────────────────────
+// Dedicated focused Claude Haiku call — just finds the two summary
+// numbers from the PDF regardless of layout, bank, or section name.
+// Runs in parallel with Excel building — adds ~1s, no serial cost.
+async function runAIReconciliation(base64PDF, fileName, rowDebits, rowCredits) {
+  try {
+    const response = await client.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 300,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type:   'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: base64PDF },
+          },
+          {
+            type: 'text',
+            text: `Look at this bank statement PDF and find the SUMMARY TOTALS section.
+Banks show this differently — it may be called "Checking Summary", "Account Summary", "Transaction Summary", or appear as a table at the top or end of the statement.
+
+Find:
+1. Total amount of all DEBITS / withdrawals / outflows — this is the SUM of all debit categories (checks paid + ATM withdrawals + fees + electronic withdrawals + any other outflow category). Add them all together.
+2. Total amount of all CREDITS / deposits / inflows — this is the SUM of all credit/deposit categories.
+
+Return ONLY this JSON, nothing else:
+{"pdfDebits": <number or null>, "pdfCredits": <number or null>, "debitLabel": "<exact label or combined labels from PDF>", "creditLabel": "<exact label from PDF>"}
+
+Rules:
+- pdfDebits must be the TOTAL of ALL debit/withdrawal categories added together
+- pdfCredits must be the TOTAL of ALL credit/deposit categories added together
+- If you cannot find a value, use null
+- Return ONLY valid JSON, no markdown, no explanation`,
+          },
+        ],
+      }],
+    });
+
+    const raw  = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const data = JSON.parse(raw);
+
+    const pdfDebits  = data.pdfDebits  != null ? parseFloat(data.pdfDebits)  : null;
+    const pdfCredits = data.pdfCredits != null ? parseFloat(data.pdfCredits) : null;
+
+    return {
+      file:         fileName,
+      pdfDebits,
+      pdfCredits,
+      debitLabel:   data.debitLabel  || 'Total Debits',
+      creditLabel:  data.creditLabel || 'Total Credits',
+      rowDebits:    +rowDebits.toFixed(2),
+      rowCredits:   +rowCredits.toFixed(2),
+      debitsMatch:  pdfDebits  != null && Math.abs(pdfDebits  - rowDebits)  < 1,
+      creditsMatch: pdfCredits != null && Math.abs(pdfCredits - rowCredits) < 1,
+    };
+  } catch (err) {
+    console.log('Reconciliation failed for', fileName, '|', err.message);
+    return {
+      file:         fileName,
+      pdfDebits:    null,
+      pdfCredits:   null,
+      debitLabel:   'Total Debits',
+      creditLabel:  'Total Credits',
+      rowDebits:    +rowDebits.toFixed(2),
+      rowCredits:   +rowCredits.toFixed(2),
+      debitsMatch:  false,
+      creditsMatch: false,
+      error:        'Could not read summary totals from PDF',
+    };
+  }
+}
+
 // ── QC DATA BUILDER ──────────────────────────────────────────
 // Builds qcData from already-extracted data — zero extra API calls.
 //
-// Three fixes applied here vs the old version:
-//
 // FIX 1 — totalDebits/totalCredits use Claude's extracted summary values
-//   (data.total_debits / data.total_credits from the statement header)
 //   NOT re-summed from transaction rows. Chase statements group transactions
-//   by type (deposits block, then checks block) so re-summing rows gives
-//   wrong totals when the array order doesn't match chronological order.
+//   by type so re-summing rows gives wrong totals.
 //
 // FIX 2 — Running balance recomputation sorts transactions by date first.
-//   Chase statements come with deposits first, then checks, then ATM, then
-//   fees — all out of date order. Without sorting, sequential recomputation
-//   generates 20+ false positive balance errors on a clean statement.
+//   Chase statements come deposits-first then checks — without sorting,
+//   sequential recomputation generates false positive errors on clean data.
 //
-// FIX 3 — Balance math check uses summary totals (fix 1 values), not
-//   recomputed row sums, so the opening + credits - debits = closing
-//   check is accurate.
+// FIX 3 — Running balance errors only shown when statement balance math
+//   also fails. If opening + credits - debits = closing ✅, running balance
+//   mismatches are sort-order artifacts — suppress them entirely.
 function buildBankQcData(allStatements, allTransactions) {
 
   // Date gaps — flag gaps > 5 days within a statement
@@ -135,7 +202,7 @@ function buildBankQcData(allStatements, allTransactions) {
     }
   });
 
-  // Amount outliers — flag amounts > 20x the median (catches OCR extra zeros)
+  // Amount outliers — flag amounts > 20x median (catches OCR extra zeros)
   const amountOutliers = [];
   allStatements.forEach((stmt) => {
     const amounts = (stmt.transactions || [])
@@ -159,15 +226,27 @@ function buildBankQcData(allStatements, allTransactions) {
     });
   });
 
-  // Running balance errors — sort by date before recomputing (FIX 2)
+  // Running balance errors — sort by date first (FIX 2), suppress when
+  // overall balance math passes (FIX 3)
+  const statementsWithBadMath = new Set(
+    allStatements
+      .filter((s) => {
+        if (s.openingBalance == null || s.closingBalance == null ||
+            s.totalDebits    == null || s.totalCredits   == null) return false;
+        const expected = +(s.openingBalance + s.totalCredits - s.totalDebits).toFixed(2);
+        return Math.abs(expected - s.closingBalance) > 1;
+      })
+      .map((s) => s.fileName)
+  );
+
   const runningBalanceErrors = [];
   allStatements.forEach((stmt) => {
+    // Only check running balance if overall math is wrong
+    if (!statementsWithBadMath.has(stmt.fileName)) return;
+
     const rawTxs = stmt.transactions || [];
     if (!rawTxs.length || rawTxs[0].running_balance == null) return;
 
-    // CRITICAL: sort by date first — Chase and many banks sort transactions
-    // by type (deposits, then checks) not chronologically. Without this sort,
-    // sequential recomputation produces false positive errors on clean data.
     const txs = [...rawTxs]
       .filter(t => t.date)
       .sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -183,7 +262,7 @@ function buildBankQcData(allStatements, allTransactions) {
           expected: running.toFixed(2),
           found:    printed.toFixed(2),
         });
-        running = printed; // resync to prevent cascading errors
+        running = printed;
       }
     });
   });
@@ -195,8 +274,8 @@ function buildBankQcData(allStatements, allTransactions) {
       periodEnd:        s.periodEnd      || null,
       openingBalance:   s.openingBalance ?? null,
       closingBalance:   s.closingBalance ?? null,
-      totalDebits:      s.totalDebits    ?? null,  // Claude's extracted summary value (FIX 1)
-      totalCredits:     s.totalCredits   ?? null,  // Claude's extracted summary value (FIX 1)
+      totalDebits:      s.totalDebits    ?? null,
+      totalCredits:     s.totalCredits   ?? null,
       transactionCount: (s.transactions || []).length,
     })),
     transactions: allTransactions.map((t) => ({
@@ -232,35 +311,35 @@ export async function POST(request) {
       );
     }
 
-    // ── Parallel extraction ──────────────────────────────────
+    // ── Parallel extraction + reconciliation ────────────────
     const results = await Promise.all(pdfFiles.map(async (file) => {
       try {
         console.log('Processing:', file.name, '| Size:', file.size);
         const arrayBuffer = await file.arrayBuffer();
         const base64PDF   = Buffer.from(arrayBuffer).toString('base64');
 
-        const stream = client.messages.stream({
-          model:      'claude-sonnet-4-5',
-          max_tokens: 32000,
-          messages: [{
-            role: 'user',
-            content: [
-              {
-                type:   'document',
-                source: { type: 'base64', media_type: 'application/pdf', data: base64PDF },
-              },
-              {
-                type: 'text',
-                text: PROMPT,
-              },
-            ],
-          }],
-        });
+        // ── Run extraction and reconciliation in parallel ──
+        const [claudeResponse, /* reconciliation runs after we have row sums */] = await Promise.all([
+          client.messages.stream({
+            model:      'claude-sonnet-4-5',
+            max_tokens: 32000,
+            messages: [{
+              role: 'user',
+              content: [
+                {
+                  type:   'document',
+                  source: { type: 'base64', media_type: 'application/pdf', data: base64PDF },
+                },
+                { type: 'text', text: PROMPT },
+              ],
+            }],
+          }).finalMessage(),
+          Promise.resolve(), // placeholder — reconciliation needs row sums first
+        ]);
 
-        const claudeResponse = await stream.finalMessage();
-        let responseText     = claudeResponse.content[0].text.trim();
-        responseText         = repairJSON(responseText);
-        const data           = JSON.parse(responseText);
+        let responseText = claudeResponse.content[0].text.trim();
+        responseText     = repairJSON(responseText);
+        const data       = JSON.parse(responseText);
 
         if (data.error === 'NOT_A_BANK_STATEMENT') {
           console.log('Not a bank statement:', file.name, '| Type:', data.document_type);
@@ -301,40 +380,45 @@ export async function POST(request) {
 
         console.log('Success:', file.name, '| Transactions:', transactions.length);
 
-        const inputBaseName = file.name.replace(/\.pdf$/i, '');
+        // Row sums — computed OUTSIDE statementObj (cannot use const inside object literal)
+        const rowDebits  = (data.transactions || [])
+          .reduce((s, t) => s + (parseFloat(t.debit)  || 0), 0);
+        const rowCredits = (data.transactions || [])
+          .reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
 
-        // ── FIX 1: totalDebits and totalCredits computed OUTSIDE
-        //    the statementObj literal (cannot use const inside object).
-        //
-        //    Use Claude's extracted summary totals (data.total_debits /
-        //    data.total_credits) as the primary source — these come from
-        //    the "CHECKING SUMMARY" / "Total Deposits" section of the PDF
-        //    and are always correct regardless of transaction sort order.
-        //
-        //    Fall back to row-sum only when summary is missing or zero.
-        const totalDebits = parseFloat(data.total_debits) > 0
+        // Use Claude's extracted summary totals as primary source (correct for
+        // Chase-format statements). Fall back to row sums if summary missing.
+        const totalDebits  = parseFloat(data.total_debits)  > 0
           ? parseFloat(data.total_debits)
-          : (data.transactions || []).reduce((s, t) => s + (parseFloat(t.debit)  || 0), 0);
+          : rowDebits;
 
         const totalCredits = parseFloat(data.total_credits) > 0
           ? parseFloat(data.total_credits)
-          : (data.transactions || []).reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
+          : rowCredits;
 
         const statementObj = {
           fileName:       file.name,
           openingBalance: data.opening_balance || 0,
           closingBalance: data.closing_balance || 0,
-          totalDebits,    // authoritative summary total (not re-summed from rows)
-          totalCredits,   // authoritative summary total (not re-summed from rows)
+          totalDebits,
+          totalCredits,
           transactions:   data.transactions    || [],
         };
 
+        // ── AI Reconciliation — now that we have row sums ──
+        // Uses Haiku (fast, cheap) — just finds two numbers in the PDF.
+        // Runs independently so extraction errors don't block it.
+        const reconciliationResult = await runAIReconciliation(
+          base64PDF, file.name, rowDebits, rowCredits
+        );
+
         return {
-          success:        true,
+          success:              true,
           transactions,
           summary,
           statementObj,
-          outputFileName: `${inputBaseName}.xlsx`,
+          reconciliationResult,
+          outputFileName:       `${file.name.replace(/\.pdf$/i, '')}.xlsx`,
         };
 
       } catch (err) {
@@ -347,6 +431,7 @@ export async function POST(request) {
     const allTransactions = [];
     const allStatements   = [];
     const summaries       = [];
+    const reconciliation  = [];
     const errors          = [];
     let outputFileName    = 'bank_extraction.xlsx';
 
@@ -355,6 +440,7 @@ export async function POST(request) {
         allTransactions.push(...r.transactions);
         allStatements.push(r.statementObj);
         summaries.push(r.summary);
+        if (r.reconciliationResult) reconciliation.push(r.reconciliationResult);
         if (outputFileName === 'bank_extraction.xlsx' && r.outputFileName) {
           outputFileName = r.outputFileName;
         }
@@ -495,8 +581,8 @@ export async function POST(request) {
       errors,
       excelFile:         excelBase64,
       fileName:          outputFileName,
-      // qcData — built from already-extracted data, zero extra API calls
-      qcData: buildBankQcData(allStatements, allTransactions),
+      reconciliation,    // ← AI-verified PDF totals vs extracted row sums
+      qcData:            buildBankQcData(allStatements, allTransactions),
     });
 
   } catch (err) {

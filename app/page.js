@@ -1631,6 +1631,8 @@ function BankExtractTool({ onBack }) {
       {result && (
         <div style={{ background: '#f0fff4', border: '1px solid #86efac', borderRadius: '10px', padding: '20px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 16px' }}>✅ Extraction Complete!</p>
+
+          {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div style={{ background: 'white', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
               <div style={{ fontSize: '24px', fontWeight: '800', color: '#1a3c6e' }}>{result.totalFiles}</div>
@@ -1641,12 +1643,138 @@ function BankExtractTool({ onBack }) {
               <div style={{ fontSize: '12px', color: '#888' }}>Transactions Extracted</div>
             </div>
           </div>
+
+          {/* Per-file summaries */}
           {result.summaries && result.summaries.map((s, i) => (
             <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '12px', marginBottom: '8px', fontSize: '13px' }}>
               <p style={{ fontWeight: '700', color: '#1a3c6e', margin: '0 0 4px' }}>📄 {s.file}</p>
               <p style={{ color: '#555', margin: '0' }}>{s.bank} • {s.account_holder} • {s.account_number} • {s.period} • {s.transaction_count} transactions</p>
             </div>
           ))}
+
+          {/* ── AI RECONCILIATION PANEL ── */}
+          {result.reconciliation && result.reconciliation.length > 0 && (
+            <div style={{ marginBottom: '16px', marginTop: '4px' }}>
+              <div style={{ fontWeight: '700', fontSize: '13px', color: '#1a3c6e', marginBottom: '10px' }}>
+                🔍 AI Extraction Verification
+              </div>
+              {result.reconciliation.map((rec, i) => {
+                const allMatch = rec.debitsMatch && rec.creditsMatch;
+                const noData   = rec.pdfDebits == null && rec.pdfCredits == null;
+                const borderCol = noData ? '#e5e7eb' : allMatch ? '#86efac' : '#fca5a5';
+                const bgCol     = noData ? '#f9fafb' : allMatch ? '#f0fff4' : '#fff5f5';
+                return (
+                  <div key={i} style={{
+                    background: bgCol,
+                    border: `1.5px solid ${borderCol}`,
+                    borderRadius: '10px',
+                    padding: '14px 16px',
+                    marginBottom: '10px',
+                  }}>
+                    {/* File name + overall status */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '8px' }}>
+                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        📄 {rec.file.replace(/^.*[\\/]/, '')}
+                      </div>
+                      <div style={{
+                        fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', flexShrink: 0,
+                        background: noData ? '#f3f4f6' : allMatch ? '#dcfce7' : '#fee2e2',
+                        color: noData ? '#6b7280' : allMatch ? '#166534' : '#991b1b',
+                      }}>
+                        {noData ? '— Not verified' : allMatch ? '✅ Totals match' : '❌ Mismatch found'}
+                      </div>
+                    </div>
+
+                    {/* Debit + Credit side by side */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      {/* DEBITS */}
+                      <div style={{
+                        background: rec.debitsMatch ? '#dcfce7' : rec.pdfDebits == null ? '#f3f4f6' : '#fee2e2',
+                        borderRadius: '8px', padding: '12px',
+                      }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#666', marginBottom: '6px', letterSpacing: '0.05em' }}>
+                          TOTAL DEBITS
+                        </div>
+                        <div style={{ fontSize: '20px', fontWeight: '800', marginBottom: '6px',
+                          color: rec.debitsMatch ? '#166534' : rec.pdfDebits == null ? '#9ca3af' : '#991b1b' }}>
+                          {rec.debitsMatch ? '✅' : rec.pdfDebits == null ? '—' : '❌'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#555', marginBottom: '2px' }}>
+                          <span style={{ fontWeight: '600' }}>PDF: </span>
+                          {rec.pdfDebits != null
+                            ? `$${rec.pdfDebits.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                            : <span style={{ color: '#9ca3af' }}>Not found</span>}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#555', marginBottom: rec.pdfDebits != null && !rec.debitsMatch ? '4px' : '0' }}>
+                          <span style={{ fontWeight: '600' }}>Extracted: </span>
+                          ${rec.rowDebits.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </div>
+                        {!rec.debitsMatch && rec.pdfDebits != null && (
+                          <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: '700', marginTop: '4px' }}>
+                            Off by ${Math.abs(rec.pdfDebits - rec.rowDebits).toFixed(2)}
+                          </div>
+                        )}
+                        {rec.debitLabel && (
+                          <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            from: "{rec.debitLabel}"
+                          </div>
+                        )}
+                      </div>
+
+                      {/* CREDITS */}
+                      <div style={{
+                        background: rec.creditsMatch ? '#dcfce7' : rec.pdfCredits == null ? '#f3f4f6' : '#fee2e2',
+                        borderRadius: '8px', padding: '12px',
+                      }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#666', marginBottom: '6px', letterSpacing: '0.05em' }}>
+                          TOTAL CREDITS
+                        </div>
+                        <div style={{ fontSize: '20px', fontWeight: '800', marginBottom: '6px',
+                          color: rec.creditsMatch ? '#166534' : rec.pdfCredits == null ? '#9ca3af' : '#991b1b' }}>
+                          {rec.creditsMatch ? '✅' : rec.pdfCredits == null ? '—' : '❌'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#555', marginBottom: '2px' }}>
+                          <span style={{ fontWeight: '600' }}>PDF: </span>
+                          {rec.pdfCredits != null
+                            ? `$${rec.pdfCredits.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                            : <span style={{ color: '#9ca3af' }}>Not found</span>}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#555', marginBottom: rec.pdfCredits != null && !rec.creditsMatch ? '4px' : '0' }}>
+                          <span style={{ fontWeight: '600' }}>Extracted: </span>
+                          ${rec.rowCredits.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </div>
+                        {!rec.creditsMatch && rec.pdfCredits != null && (
+                          <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: '700', marginTop: '4px' }}>
+                            Off by ${Math.abs(rec.pdfCredits - rec.rowCredits).toFixed(2)}
+                          </div>
+                        )}
+                        {rec.creditLabel && (
+                          <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            from: "{rec.creditLabel}"
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* No data message */}
+                    {noData && (
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '10px', textAlign: 'center' }}>
+                        Claude could not find summary totals in this PDF — verify manually
+                      </div>
+                    )}
+
+                    {/* Mismatch warning */}
+                    {!noData && !allMatch && (
+                      <div style={{ marginTop: '10px', padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', fontSize: '12px', color: '#991b1b' }}>
+                        ⚠️ Extraction totals do not match PDF summary — some transactions may be missing or duplicated. Re-run extraction or manually verify.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <button onClick={handleDownload}
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Excel File
