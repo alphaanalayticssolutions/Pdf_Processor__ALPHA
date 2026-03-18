@@ -18,11 +18,6 @@ function getTimestamp() {
   return { label: `${date}_${time}` };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STAMP POSITION CALCULATOR
-// cornerPct: configurable corner zone percentage (default 0.10 = 10%)
-// Positions: bottom-right | bottom-left | top-right | top-left | center-bottom
-// ─────────────────────────────────────────────────────────────────────────────
 function getStampCoordinates(position, page, font, batesNumber, fontSize, cornerPct) {
   const { width, height } = page.getSize();
   const textWidth = font.widthOfTextAtSize(batesNumber, fontSize);
@@ -42,7 +37,6 @@ function getStampCoordinates(position, page, font, batesNumber, fontSize, corner
     x = margin;
     y = height - margin - fontSize;
   } else {
-    // center-bottom — used when all 4 corners are occupied
     x = (width / 2) - (textWidth / 2);
     y = margin;
   }
@@ -52,9 +46,6 @@ function getStampCoordinates(position, page, font, batesNumber, fontSize, corner
   return { x, y };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CLAUDE PROMPT — corner zone uses configurable percentage
-// ─────────────────────────────────────────────────────────────────────────────
 function buildClaudePrompt(cornerPct) {
   const pctDisplay = Math.round(cornerPct * 100);
   return `You are analyzing the FIRST PAGE of a legal PDF document for Bates stamp placement.
@@ -87,9 +78,6 @@ Rules:
 - SCANNED "yes" = page is a scanned image with no selectable text layer`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PARSE CLAUDE RESPONSE
-// ─────────────────────────────────────────────────────────────────────────────
 function parseClaudeResponse(reply) {
   const positions = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
   const corners = {};
@@ -108,10 +96,6 @@ function parseClaudeResponse(reply) {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CHOOSE BEST POSITION
-// Priority: bottom-right → bottom-left → top-right → top-left → center-bottom
-// ─────────────────────────────────────────────────────────────────────────────
 function chooseBestPosition(corners) {
   const priority = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
   for (const pos of priority) {
@@ -120,9 +104,6 @@ function chooseBestPosition(corners) {
   return { position: 'center-bottom', usedFallback: true };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CLASSIFY CLAUDE ERROR
-// ─────────────────────────────────────────────────────────────────────────────
 function classifyClaudeError(errMessage) {
   const msg = errMessage || '';
   if (msg.includes('password protected') || msg.includes('encrypted')) {
@@ -146,9 +127,6 @@ function classifyClaudeError(errMessage) {
   return { type: 'AI Analysis Failed', reason: `Claude could not analyze this file. Error: ${msg}`, skipStamping: false };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DECRYPT PDF with password using pdf-lib
-// ─────────────────────────────────────────────────────────────────────────────
 async function tryDecryptPDF(arrayBuffer, password) {
   try {
     const pdfDoc = await PDFDocument.load(arrayBuffer, {
@@ -161,26 +139,17 @@ async function tryDecryptPDF(arrayBuffer, password) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STAMP COLOUR HELPER — converts 'black' | 'red' to pdf-lib rgb
-// ─────────────────────────────────────────────────────────────────────────────
 function getStampColor(colorName) {
   if (colorName === 'red') return rgb(0.8, 0, 0);
-  return rgb(0, 0, 0); // default black
+  return rgb(0, 0, 0);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STAMP FONT HELPER — maps font name string to StandardFonts
-// ─────────────────────────────────────────────────────────────────────────────
 function getStampFont(fontName) {
   if (fontName === 'Courier') return StandardFonts.Courier;
   if (fontName === 'Times') return StandardFonts.TimesRoman;
-  return StandardFonts.Helvetica; // default
+  return StandardFonts.Helvetica;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ERROR EXCEL REPORT BUILDER
-// ─────────────────────────────────────────────────────────────────────────────
 async function buildErrorReport(errorRows, timestamp) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Alpha Analytics - Bates Stamp Tool';
@@ -227,9 +196,6 @@ async function buildErrorReport(errorRows, timestamp) {
   return await workbook.xlsx.writeBuffer();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN POST HANDLER
-// ─────────────────────────────────────────────────────────────────────────────
 export async function POST(request) {
   try {
     const formData   = await request.formData();
@@ -237,20 +203,18 @@ export async function POST(request) {
     const prefix     = formData.get('prefix') || 'DOC-';
     const startNumber = parseInt(formData.get('startNumber')) || 1;
     const padLength  = parseInt(formData.get('padLength')) || 6;
-    const password   = formData.get('password') || '';          // NEW: optional PDF password
-    const cornerPct  = Math.min(0.15, Math.max(0.05,           // NEW: configurable corner %, clamped 5-15%
+    const password   = formData.get('password') || '';
+    const cornerPct  = Math.min(0.15, Math.max(0.05,
                          parseFloat(formData.get('cornerPct')) || 0.10));
-    const fontSize   = Math.min(16, Math.max(6,                 // NEW: configurable font size, clamped 6-16
+    const fontSize   = Math.min(16, Math.max(6,
                          parseInt(formData.get('fontSize')) || 10));
-    const stampColor = formData.get('stampColor') || 'black';   // NEW: 'black' | 'red'
-    const stampFont  = formData.get('stampFont') || 'Helvetica'; // NEW: 'Helvetica' | 'Courier' | 'Times'
+    const stampColor = formData.get('stampColor') || 'black';
+    const stampFont  = formData.get('stampFont') || 'Helvetica';
 
     const { label: timestamp } = getTimestamp();
 
-    // ── Filter PDFs only ──────────────────────────────────────────────────
-    // NOTE: Duplicate detection excluded intentionally — belongs in Step 1.
     const pdfFiles     = [];
-    const skippedFiles = []; // non-PDF files
+    const skippedFiles = [];
 
     for (const file of files) {
       if (isPDF(file.name)) pdfFiles.push(file);
@@ -261,38 +225,36 @@ export async function POST(request) {
       return Response.json({ error: 'No PDF files found!' }, { status: 400 });
     }
 
-    let currentNumber       = startNumber;
-    const zip               = new JSZip();
-    const errorRows         = [];
-    const scannedPDFs       = [];
-    const fallbackFiles     = [];
+    let currentNumber         = startNumber;
+    const zip                 = new JSZip();
+    const errorRows           = [];
+    const scannedPDFs         = [];
+    const fallbackFiles       = [];
     const cornerAdjustedFiles = [];
-    const aiFailedFiles     = [];
-    const passwordFiles     = [];   // NEW: password-protected files (skipped)
-    let processedCount      = 0;
-    let skippedCount        = 0;    // NEW: total files not stamped for any reason
+    const aiFailedFiles       = [];
+    const passwordFiles       = [];
+    // ── NEW: track processed file details for QC ─────────────────────────
+    const processedFiles      = [];
+    let processedCount        = 0;
+    let skippedCount          = 0;
+    let totalStampedPages     = 0;
 
-    // ── Process each PDF ──────────────────────────────────────────────────
     for (const file of pdfFiles) {
       try {
         const arrayBuffer = await file.arrayBuffer();
 
-        // ── Load PDF — try with password first if provided ────────────────
         let pdfDoc;
         let wasDecrypted = false;
 
         try {
-          // First try: load normally (works for non-encrypted PDFs)
           pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
 
-          // If PDF is encrypted AND user provided a password, try proper decryption
           if (pdfDoc.isEncrypted && password) {
             const decryptResult = await tryDecryptPDF(arrayBuffer, password);
             if (decryptResult.success) {
               pdfDoc = decryptResult.pdfDoc;
               wasDecrypted = true;
             } else {
-              // Wrong password — skip this file
               passwordFiles.push(file.name);
               skippedCount++;
               errorRows.push({
@@ -305,7 +267,6 @@ export async function POST(request) {
               continue;
             }
           } else if (pdfDoc.isEncrypted && !password) {
-            // Encrypted but no password given — skip
             passwordFiles.push(file.name);
             skippedCount++;
             errorRows.push({
@@ -329,15 +290,24 @@ export async function POST(request) {
           continue;
         }
 
-        // ── Embed font with chosen style ──────────────────────────────────
         const fontEnum = getStampFont(stampFont);
         const font     = await pdfDoc.embedFont(fontEnum);
         const pages    = pdfDoc.getPages();
         const color    = getStampColor(stampColor);
 
-        // ── Send to Claude for corner analysis ────────────────────────────
-        // If it was decrypted with a password, we can now safely convert to base64
-        const base64PDF   = Buffer.from(arrayBuffer).toString('base64');
+        // ── FIX: build base64 from DECRYPTED bytes when password was used ─
+        // Previously always used the original encrypted arrayBuffer, which
+        // caused Claude to receive unreadable encrypted bytes and fall back
+        // to default bottom-right stamping on every password-unlocked PDF.
+        let base64PDF;
+        if (wasDecrypted) {
+          // Save the unlocked PDF to a clean buffer for Claude's analysis
+          const decryptedBytes = await pdfDoc.save();
+          base64PDF = Buffer.from(decryptedBytes).toString('base64');
+        } else {
+          base64PDF = Buffer.from(arrayBuffer).toString('base64');
+        }
+
         let stampPosition = 'bottom-right';
         let shouldStamp   = true;
 
@@ -354,7 +324,6 @@ export async function POST(request) {
             }],
           });
 
-          // Guard: empty/malformed Claude response
           if (!claudeResponse.content?.[0]?.text) {
             throw new Error("Claude returned an empty response (reading 'text')");
           }
@@ -364,7 +333,6 @@ export async function POST(request) {
 
           const { corners, hasBates, batesLocation, isScanned } = parseClaudeResponse(reply);
 
-          // Already Bates stamped → skip entire file
           if (hasBates) {
             skippedCount++;
             errorRows.push({
@@ -378,7 +346,6 @@ export async function POST(request) {
             continue;
           }
 
-          // Scanned PDF → stamp it but flag
           if (isScanned) {
             scannedPDFs.push(file.name);
             errorRows.push({
@@ -390,7 +357,6 @@ export async function POST(request) {
             });
           }
 
-          // Pick best available corner
           const { position, usedFallback } = chooseBestPosition(corners);
           stampPosition = position;
 
@@ -421,7 +387,6 @@ export async function POST(request) {
           const { type, reason, skipStamping } = classifyClaudeError(claudeErr.message);
 
           if (skipStamping) {
-            // Password-protected caught by Claude error (backup detection)
             passwordFiles.push(file.name);
             skippedCount++;
             errorRows.push({
@@ -448,6 +413,8 @@ export async function POST(request) {
         if (!shouldStamp) continue;
 
         // ── Stamp every page ──────────────────────────────────────────────
+        const firstBatesNumber = prefix + String(currentNumber).padStart(padLength, '0');
+
         for (let p = 0; p < pages.length; p++) {
           const page        = pages[p];
           const batesNumber = prefix + String(currentNumber + p).padStart(padLength, '0');
@@ -456,14 +423,10 @@ export async function POST(request) {
         }
 
         currentNumber += pages.length;
+        totalStampedPages += pages.length;
 
-        // pdf-lib is non-destructive — images, fonts, content streams untouched.
-        // Output is ~2-5% larger than input due to added text + xref update.
         const stampedBytes = await pdfDoc.save();
 
-        // ── Preserve original folder structure in ZIP ─────────────────────
-        // file.name may include subfolder path e.g. "work/Case_A/doc.pdf"
-        // We keep that structure and just prefix the filename part with "stamped_"
         const pathParts     = file.name.replace(/\\/g, '/').split('/');
         const originalName  = pathParts.pop();
         const folderPath    = pathParts.join('/');
@@ -473,6 +436,15 @@ export async function POST(request) {
 
         zip.file(stampedName, stampedBytes);
         processedCount++;
+
+        // ── NEW: record file details for QC badge ─────────────────────────
+        processedFiles.push({
+          name:       file.name,
+          pageCount:  pages.length,
+          batesStart: firstBatesNumber,
+          batesEnd:   prefix + String(currentNumber - 1).padStart(padLength, '0'),
+          position:   stampPosition,
+        });
 
       } catch (fileErr) {
         skippedCount++;
@@ -486,7 +458,6 @@ export async function POST(request) {
       }
     }
 
-    // ── Log non-PDF skipped files ─────────────────────────────────────────
     skippedFiles.forEach((name) => {
       skippedCount++;
       errorRows.push({
@@ -498,7 +469,6 @@ export async function POST(request) {
       });
     });
 
-    // ── Error Excel report ─────────────────────────────────────────────────
     if (errorRows.length > 0) {
       const reportBuffer = await buildErrorReport(errorRows, timestamp);
       zip.file(`error_report_${timestamp}.xlsx`, reportBuffer);
@@ -508,19 +478,21 @@ export async function POST(request) {
     const zipBase64 = zipBytes.toString('base64');
 
     return Response.json({
-      success:            true,
-      zipFile:            zipBase64,
-      processedCount,                // successfully stamped
-      skippedCount,                  // total not stamped (password + already stamped + corrupt etc)
-      totalFiles:         pdfFiles.length,
-      skippedFiles,                  // non-PDF files
-      scannedPDFs,                   // image-only PDFs (stamped but flagged)
-      fallbackFiles,                 // center-bottom used (all corners occupied)
-      cornerAdjustedFiles,           // stamp moved to non-default corner (info only)
-      aiFailedFiles,                 // Claude failed — stamped at bottom-right
-      passwordFiles,                 // password-protected — skipped
-      errorCount:         errorRows.length,
-      hasErrorReport:     errorRows.length > 0,
+      success:              true,
+      zipFile:              zipBase64,
+      processedCount,
+      skippedCount,
+      totalFiles:           pdfFiles.length,
+      totalStampedPages,          // NEW
+      processedFiles,             // NEW — used by QC badge in frontend
+      skippedFiles,
+      scannedPDFs,
+      fallbackFiles,
+      cornerAdjustedFiles,
+      aiFailedFiles,
+      passwordFiles,
+      errorCount:           errorRows.length,
+      hasErrorReport:       errorRows.length > 0,
     });
 
   } catch (err) {

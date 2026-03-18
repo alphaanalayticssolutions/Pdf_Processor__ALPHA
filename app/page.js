@@ -175,14 +175,14 @@ export default function Home() {
           </div>
         )}
 
-        {activeTool === 'duplicate' && <DuplicateTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'splitter' && <SplitterTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'categorise' && <CategoriseTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'stamping' && <StampingTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'extraction' && <ExtractionTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'tracker' && <StatementTrackerTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'desc-categoriser' && <DescriptionCategoriserTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'transaction-analysis' && <TransactionAnalysisTool onBack={() => setActiveTool(null)} />}
+        {activeTool === 'duplicate'            && <DuplicateTool             onBack={() => setActiveTool(null)} />}
+        {activeTool === 'splitter'             && <SplitterTool              onBack={() => setActiveTool(null)} />}
+        {activeTool === 'categorise'           && <CategoriseTool            onBack={() => setActiveTool(null)} />}
+        {activeTool === 'stamping'             && <StampingTool              onBack={() => setActiveTool(null)} />}
+        {activeTool === 'extraction'           && <ExtractionTool            onBack={() => setActiveTool(null)} />}
+        {activeTool === 'tracker'              && <StatementTrackerTool      onBack={() => setActiveTool(null)} />}
+        {activeTool === 'desc-categoriser'     && <DescriptionCategoriserTool onBack={() => setActiveTool(null)} />}
+        {activeTool === 'transaction-analysis' && <TransactionAnalysisTool   onBack={() => setActiveTool(null)} />}
       </div>
 
       <div style={{ textAlign: 'center', padding: '20px', color: '#ccc', fontSize: '11px', letterSpacing: '1px' }}>
@@ -194,7 +194,6 @@ export default function Home() {
 
 // ==========================================
 // TRANSACTION ANALYSIS TOOL
-// FIXES: removed stray setResult in loadFiles, switched from blob to JSON response
 // ==========================================
 function TransactionAnalysisTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -203,7 +202,6 @@ function TransactionAnalysisTool({ onBack }) {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
 
-  // FIX: loadFiles only loads files — no stray setResult here
   const loadFiles = (fileList) => {
     const valid = Array.from(fileList).filter(f => {
       const n = f.name.toLowerCase();
@@ -222,9 +220,9 @@ function TransactionAnalysisTool({ onBack }) {
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
-  const handleFileSelect = (e) => loadFiles(e.target.files);
-  const toggleOne = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll = () => {
+  const handleFileSelect   = (e) => loadFiles(e.target.files);
+  const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleAll  = () => {
     const allChecked = allFiles.every(f => selected[f.name]);
     const sel = {};
     allFiles.forEach(f => sel[f.name] = !allChecked);
@@ -233,8 +231,8 @@ function TransactionAnalysisTool({ onBack }) {
   const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
-  const allChecked = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
-  const someChecked = allFiles.some(f => selected[f.name]);
+  const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
+  const someChecked   = allFiles.some(f => selected[f.name]);
 
   const handleAnalyse = async () => {
     if (selectedFiles.length === 0) { setError('Please select at least one file.'); return; }
@@ -243,29 +241,21 @@ function TransactionAnalysisTool({ onBack }) {
       const formData = new FormData();
       selectedFiles.forEach(f => formData.append('files', f));
       const res = await fetch('/api/transaction-analysis', { method: 'POST', body: formData });
-
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Server error: ${res.status}`);
       }
-
-      // FIX: API should return JSON { excelFile: base64, fileName, qcData }
-      // If your API still returns a blob, change it to return JSON with base64
       const data = await res.json();
-
-      // Build blob URL for download from base64
       const blob = new Blob(
         [Uint8Array.from(atob(data.excelFile), c => c.charCodeAt(0))],
         { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
       );
       const url = URL.createObjectURL(blob);
-
       setResult({
         url,
         fileName: data.fileName || 'Transaction_Analysis.xlsx',
         fileCount: selectedFiles.length,
         filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
-        // qcData comes from the API route (accounts, flaggedTransfers, etc.)
         qcData: data.qcData || {
           fileCount: selectedFiles.length,
           filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
@@ -283,9 +273,7 @@ function TransactionAnalysisTool({ onBack }) {
   const handleDownload = () => {
     if (!result) return;
     const a = document.createElement('a');
-    a.href = result.url;
-    a.download = result.fileName;
-    a.click();
+    a.href = result.url; a.download = result.fileName; a.click();
   };
 
   const handleClear = () => {
@@ -363,12 +351,7 @@ function TransactionAnalysisTool({ onBack }) {
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', marginBottom: '10px' }}>
             📥 Download Transaction_Analysis.xlsx
           </button>
-          {/* QC — toolName: transaction-analysis, toolOutput from result.qcData */}
-          <QCBadge
-            toolName="transaction-analysis"
-            toolOutput={result.qcData}
-            metadata={{}}
-          />
+          <QCBadge toolName="transaction-analysis" toolOutput={result.qcData} metadata={{}} />
           <button onClick={handleClear}
             style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
             ↺ Analyse Another File
@@ -381,7 +364,6 @@ function TransactionAnalysisTool({ onBack }) {
 
 // ==========================================
 // STATEMENT TRACKER TOOL
-// FIX: totalAccounts = bankAccounts + creditCards
 // ==========================================
 function StatementTrackerTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -408,9 +390,9 @@ function StatementTrackerTool({ onBack }) {
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
-  const handleFileSelect = (e) => loadFiles(e.target.files);
-  const toggleOne = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll = () => {
+  const handleFileSelect   = (e) => loadFiles(e.target.files);
+  const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleAll  = () => {
     const allChecked = allFiles.every(f => selected[f.name]);
     const sel = {};
     allFiles.forEach(f => sel[f.name] = !allChecked);
@@ -419,8 +401,8 @@ function StatementTrackerTool({ onBack }) {
   const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
-  const allChecked = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
-  const someChecked = allFiles.some(f => selected[f.name]);
+  const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
+  const someChecked   = allFiles.some(f => selected[f.name]);
 
   const handleGenerate = async () => {
     if (selectedFiles.length === 0) { setError('Please select at least one Excel file.'); return; }
@@ -428,7 +410,7 @@ function StatementTrackerTool({ onBack }) {
     try {
       const fd = new FormData();
       selectedFiles.forEach(f => fd.append('excels', f));
-      const res = await fetch('/api/tracker', { method: 'POST', body: fd });
+      const res  = await fetch('/api/tracker', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
       setResult(data);
@@ -439,8 +421,8 @@ function StatementTrackerTool({ onBack }) {
   const handleDownload = () => {
     if (!result?.excelFile) return;
     const blob = new Blob([Uint8Array.from(atob(result.excelFile), c => c.charCodeAt(0))], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
     a.href = url; a.download = 'Statement_Tracker.xlsx'; a.click();
     URL.revokeObjectURL(url);
   };
@@ -528,7 +510,6 @@ function StatementTrackerTool({ onBack }) {
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Statement Tracker (.xlsx)
           </button>
-          {/* QC — FIX: totalAccounts = bank + credit cards */}
           <QCBadge
             toolName="tracker"
             toolOutput={{
@@ -553,7 +534,6 @@ function StatementTrackerTool({ onBack }) {
 
 // ==========================================
 // DESCRIPTION CATEGORISER TOOL
-// FIX: toolName updated, confidence passed through
 // ==========================================
 function DescriptionCategoriserTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -582,9 +562,9 @@ function DescriptionCategoriserTool({ onBack }) {
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
-  const handleFileSelect = (e) => loadFiles(e.target.files);
-  const toggleOne = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll = () => {
+  const handleFileSelect   = (e) => loadFiles(e.target.files);
+  const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleAll  = () => {
     const allChecked = allFiles.every(f => selected[f.name]);
     const sel = {};
     allFiles.forEach(f => sel[f.name] = !allChecked);
@@ -593,8 +573,8 @@ function DescriptionCategoriserTool({ onBack }) {
   const clearAll = () => { setAllFiles([]); setSelected({}); setResults([]); setDone(false); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
-  const allChecked = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
-  const someChecked = allFiles.some(f => selected[f.name]);
+  const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
+  const someChecked   = allFiles.some(f => selected[f.name]);
 
   const handleCategorise = async () => {
     if (selectedFiles.length === 0) { setError('Please select at least one Excel file.'); return; }
@@ -614,11 +594,11 @@ function DescriptionCategoriserTool({ onBack }) {
       const allDescriptions = new Set();
       for (const file of selectedFiles) {
         setProgress(`Reading ${file.name}...`);
-        const buffer = await file.arrayBuffer();
+        const buffer   = await file.arrayBuffer();
         const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
         for (const sheetName of workbook.SheetNames) {
           const sheet = workbook.Sheets[sheetName];
-          const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+          const rows  = XLSX.utils.sheet_to_json(sheet, { defval: '' });
           for (const row of rows) {
             const key = Object.keys(row).find(k => k.trim().toLowerCase() === 'description');
             if (key && row[key] && String(row[key]).trim() !== '') {
@@ -630,7 +610,7 @@ function DescriptionCategoriserTool({ onBack }) {
       if (allDescriptions.size === 0) throw new Error('No "Description" column found.');
       const descArray = [...allDescriptions];
       setProgress(`Categorising ${descArray.length} descriptions...`);
-      const res = await fetch('/api/categorise-descriptions', {
+      const res  = await fetch('/api/categorise-descriptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ descriptions: descArray }),
@@ -649,10 +629,10 @@ function DescriptionCategoriserTool({ onBack }) {
 
   const downloadExcel = () => {
     const rows = [['Description', 'Category'], ...results.map(r => [r.description, r.category])];
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv  = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
     a.href = url; a.download = 'categorised_descriptions.csv'; a.click();
     URL.revokeObjectURL(url);
   };
@@ -722,15 +702,10 @@ function DescriptionCategoriserTool({ onBack }) {
               ⬇ Download CSV
             </button>
           </div>
-          {/* QC — toolName: desc-categoriser, passes descriptions with category */}
           <QCBadge
             toolName="desc-categoriser"
             toolOutput={{
-              descriptions: results.map(r => ({
-                description: r.description,
-                category: r.category,
-                confidence: r.confidence || null,
-              })),
+              descriptions: results.map(r => ({ description: r.description, category: r.category, confidence: r.confidence || null })),
               semanticMismatches: [],
             }}
             metadata={{}}
@@ -768,13 +743,13 @@ function DescriptionCategoriserTool({ onBack }) {
 }
 
 // ==========================================
-// DUPLICATE REPORT TOOL — no QC (no AI involved)
+// DUPLICATE REPORT TOOL
 // ==========================================
 function DuplicateTool({ onBack }) {
-  const [files, setFiles] = useState([]);
+  const [files, setFiles]         = useState([]);
   const [processing, setProcessing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
+  const [result, setResult]       = useState(null);
+  const [error, setError]         = useState('');
 
   const handleFolderSelect = (e) => {
     setFiles(Array.from(e.target.files).filter(f => f.size > 0 && !f.name.startsWith('.')));
@@ -782,7 +757,7 @@ function DuplicateTool({ onBack }) {
   };
 
   const hashFile = async (file) => {
-    const buffer = await file.arrayBuffer();
+    const buffer     = await file.arrayBuffer();
     const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
     return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
   };
@@ -793,15 +768,15 @@ function DuplicateTool({ onBack }) {
     try {
       const fileData = [], hashMap = {};
       for (const file of files) {
-        const hash = await hashFile(file);
+        const hash  = await hashFile(file);
         const sizeKB = (file.size / 1024).toFixed(2);
         fileData.push({ fileName: file.name, hash, sizeKB });
         if (!hashMap[hash]) hashMap[hash] = [];
         hashMap[hash].push(file.name);
       }
-      const duplicates = Object.entries(hashMap).filter(([, files]) => files.length > 1).map(([hash, files]) => ({ hash, files }));
+      const duplicates     = Object.entries(hashMap).filter(([, files]) => files.length > 1).map(([hash, files]) => ({ hash, files }));
       const duplicateCount = duplicates.reduce((acc, g) => acc + g.files.length - 1, 0);
-      const res = await fetch('/api/duplicate-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileData, hashMap, duplicateCount, duplicates }) });
+      const res  = await fetch('/api/duplicate-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileData, hashMap, duplicateCount, duplicates }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Something went wrong');
       setResult(data);
@@ -811,7 +786,7 @@ function DuplicateTool({ onBack }) {
 
   const downloadExcel = (excelData) => {
     const bytes = Uint8Array.from(atob(excelData), c => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     Object.assign(document.createElement('a'), { href: url, download: 'duplicate_report.xlsx' }).click();
     URL.revokeObjectURL(url);
   };
@@ -849,7 +824,6 @@ function DuplicateTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Excel Report
           </button>
-          {/* No QC for Duplicate — it's a hash check, no AI involved */}
         </div>
       )}
     </div>
@@ -858,17 +832,16 @@ function DuplicateTool({ onBack }) {
 
 // ==========================================
 // PDF SPLITTER TOOL
-// FIX: toolName = "splitter", correct shape
 // ==========================================
 function SplitterTool({ onBack }) {
-  const [file, setFile] = useState(null);
-  const [docType, setDocType] = useState('auto');
+  const [file, setFile]           = useState(null);
+  const [docType, setDocType]     = useState('auto');
   const [splitMode, setSplitMode] = useState('ai');
   const [splitPages, setSplitPages] = useState('');
   const [splitNames, setSplitNames] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [progress, setProgress] = useState('');
+  const [result, setResult]       = useState(null);
+  const [progress, setProgress]   = useState('');
 
   const handleSubmit = async () => {
     if (!file) { alert('Please select a PDF!'); return; }
@@ -877,7 +850,7 @@ function SplitterTool({ onBack }) {
     formData.append('pdf', file); formData.append('docType', docType);
     formData.append('splitMode', splitMode); formData.append('splitPages', splitPages); formData.append('splitNames', splitNames);
     try {
-      const res = await fetch('/api/split-pdf', { method: 'POST', body: formData });
+      const res  = await fetch('/api/split-pdf', { method: 'POST', body: formData });
       const data = await res.json(); setResult(data); setProgress('');
     } catch (err) { setProgress('Error: ' + err.message); }
     setProcessing(false);
@@ -885,7 +858,7 @@ function SplitterTool({ onBack }) {
 
   const downloadZip = (zipData) => {
     const bytes = Uint8Array.from(atob(zipData), c => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+    const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
     Object.assign(document.createElement('a'), { href: url, download: 'split_documents.zip' }).click();
   };
 
@@ -950,13 +923,9 @@ function SplitterTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Split Documents (ZIP)
           </button>
-          {/* QC — toolName: splitter, correct shape */}
           <QCBadge
             toolName="splitter"
-            toolOutput={{
-              splits: result.documents.map(d => ({ name: d.name, pageCount: d.pages })),
-              totalPages: result.totalPages || 0,
-            }}
+            toolOutput={{ splits: result.documents.map(d => ({ name: d.name, pageCount: d.pages })), totalPages: result.totalPages || 0 }}
             metadata={{}}
           />
         </div>
@@ -967,7 +936,6 @@ function SplitterTool({ onBack }) {
 
 // ==========================================
 // CATEGORISATION TOOL
-// FIX: confidence mapped to float before passing to QCBadge
 // ==========================================
 const ALL_CATEGORIES = [
   { folder: '01_Bank_Statements', icon: '🏦' }, { folder: '02_Financial_Records', icon: '📊' },
@@ -993,10 +961,10 @@ function ConfidenceBadge({ confidence }) {
 }
 
 function CategoriseTool({ onBack }) {
-  const [files, setFiles] = useState([]);
+  const [files, setFiles]           = useState([]);
   const [processing, setProcessing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [progress, setProgress] = useState('');
+  const [result, setResult]         = useState(null);
+  const [progress, setProgress]     = useState('');
   const [expandedRow, setExpandedRow] = useState(null);
 
   const handleFolderSelect = (e) => {
@@ -1011,7 +979,7 @@ function CategoriseTool({ onBack }) {
     const formData = new FormData();
     for (let f of files) formData.append('files', f);
     try {
-      const res = await fetch('/api/categorise-pdf', { method: 'POST', body: formData });
+      const res  = await fetch('/api/categorise-pdf', { method: 'POST', body: formData });
       const text = await res.text();
       let data;
       try { data = JSON.parse(text); } catch { throw new Error('Server error: ' + text.slice(0, 150)); }
@@ -1023,7 +991,7 @@ function CategoriseTool({ onBack }) {
 
   const downloadZip = (zipData) => {
     const bytes = Uint8Array.from(atob(zipData), c => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+    const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
     Object.assign(document.createElement('a'), { href: url, download: 'categorised_documents.zip' }).click();
   };
 
@@ -1092,14 +1060,12 @@ function CategoriseTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Categorised Folders (ZIP)
           </button>
-          {/* QC — FIX: confidence mapped HIGH/MED/LOW → float */}
           <QCBadge
             toolName="categorisation"
             toolOutput={{
               files: (result.categorizationResults || []).map(r => ({
                 file: r.original_filename,
                 folder: r.assigned_folder,
-                // Map string confidence to float so rule checks work correctly
                 confidence: r.confidence === 'HIGH' ? 0.9 : r.confidence === 'MEDIUM' ? 0.5 : 0.2,
                 notes: r.notes,
               })),
@@ -1114,57 +1080,106 @@ function CategoriseTool({ onBack }) {
 }
 
 // ==========================================
-// BATES STAMPING TOOL
-// FIX: batesNumber added to each file, totalInputPages passed
+// BATES STAMPING TOOL — FIXED
+// Fixes: dual upload boxes, checkbox file list, correct QC badge data
 // ==========================================
 function StampingTool({ onBack }) {
-  const [files, setFiles] = useState([]);
-  const [prefix, setPrefix] = useState('DOC-');
+  const [allFiles, setAllFiles]       = useState([]);
+  const [selected, setSelected]       = useState({});
+  const [prefix, setPrefix]           = useState('DOC-');
   const [startNumber, setStartNumber] = useState(1);
-  const [padLength, setPadLength] = useState(6);
-  const [password, setPassword] = useState('');
+  const [padLength, setPadLength]     = useState(6);
+  const [password, setPassword]       = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [cornerPct, setCornerPct] = useState(10);
-  const [fontSize, setFontSize] = useState(10);
-  const [stampColor, setStampColor] = useState('black');
-  const [stampFont, setStampFont] = useState('Helvetica');
+  const [cornerPct, setCornerPct]     = useState(10);
+  const [fontSize, setFontSize]       = useState(10);
+  const [stampColor, setStampColor]   = useState('black');
+  const [stampFont, setStampFont]     = useState('Helvetica');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
+  const [processing, setProcessing]   = useState(false);
+  const [result, setResult]           = useState(null);
+  const [error, setError]             = useState('');
 
-  const handleFolderSelect = (e) => {
-    setFiles(Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.pdf')));
+  const loadFiles = (fileList) => {
+    const pdfs = Array.from(fileList).filter(
+      f => f.name.toLowerCase().endsWith('.pdf') && f.size > 0
+    );
+    setAllFiles(prev => {
+      const existing = new Map(prev.map(f => [f.name, f]));
+      pdfs.forEach(f => existing.set(f.name, f));
+      return Array.from(existing.values());
+    });
+    setSelected(prev => {
+      const updated = { ...prev };
+      pdfs.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
+      return updated;
+    });
     setResult(null); setError('');
   };
 
+  const handleFolderSelect = (e) => loadFiles(e.target.files);
+  const handleFileSelect   = (e) => loadFiles(e.target.files);
+  const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleAll  = () => {
+    const allChecked = allFiles.every(f => selected[f.name]);
+    const sel = {};
+    allFiles.forEach(f => (sel[f.name] = !allChecked));
+    setSelected(sel);
+  };
+  const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
+
+  const selectedFiles = allFiles.filter(f => selected[f.name]);
+  const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
+  const someChecked   = allFiles.some(f => selected[f.name]);
+
   const handleSubmit = async () => {
-    if (files.length === 0) { setError('Please select a folder with PDF files.'); return; }
+    if (selectedFiles.length === 0) { setError('Please select at least one PDF file.'); return; }
     setProcessing(true); setResult(null); setError('');
     const formData = new FormData();
-    for (let f of files) formData.append('pdfs', f);
-    formData.append('prefix', prefix); formData.append('startNumber', startNumber);
-    formData.append('padLength', padLength); formData.append('password', password);
-    formData.append('cornerPct', (cornerPct / 100).toString());
-    formData.append('fontSize', fontSize.toString());
-    formData.append('stampColor', stampColor); formData.append('stampFont', stampFont);
+    selectedFiles.forEach(f => formData.append('pdfs', f));
+    formData.append('prefix',      prefix);
+    formData.append('startNumber', startNumber);
+    formData.append('padLength',   padLength);
+    formData.append('password',    password);
+    formData.append('cornerPct',   (cornerPct / 100).toString());
+    formData.append('fontSize',    fontSize.toString());
+    formData.append('stampColor',  stampColor);
+    formData.append('stampFont',   stampFont);
     try {
-      const res = await fetch('/api/process-pdf', { method: 'POST', body: formData });
+      const res  = await fetch('/api/process-pdf', { method: 'POST', body: formData });
       const data = await res.json();
-      if (!res.ok || data.error) { setError(data.error || 'Something went wrong.'); }
-      else { setResult(data); }
+      if (!res.ok || data.error) setError(data.error || 'Something went wrong.');
+      else setResult(data);
     } catch (err) { setError('Request failed: ' + err.message); }
     setProcessing(false);
   };
 
   const downloadZip = (zipData) => {
     const bytes = Uint8Array.from(atob(zipData), c => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
+    const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
     Object.assign(document.createElement('a'), { href: url, download: 'stamped_pdfs.zip' }).click();
     URL.revokeObjectURL(url);
   };
 
+  // Reads processedFiles[] returned by the fixed route.js
+  const buildQCData = () => {
+    if (!result?.processedFiles) return { files: [], stampedCount: 0, totalFiles: 0, totalStampedPages: 0 };
+    return {
+      files: result.processedFiles.map(f => ({
+        name:       f.name,
+        batesStart: f.batesStart,
+        batesEnd:   f.batesEnd,
+        pages:      f.pageCount,
+        position:   f.position,
+      })),
+      stampedCount:      result.processedCount   || 0,
+      totalFiles:        selectedFiles.length,
+      totalStampedPages: result.totalStampedPages || 0,
+    };
+  };
+
   const inputStyle = { width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box', color: '#333' };
+
   const optBtn = (val, cur, set, label) => (
     <button key={val} onClick={() => set(val)}
       style={{ padding: '9px 8px', borderRadius: '8px', border: `2px solid ${cur === val ? '#1a3c6e' : '#eee'}`, background: cur === val ? '#eef2ff' : 'white', color: cur === val ? '#1a3c6e' : '#888', fontSize: '12px', fontWeight: cur === val ? '700' : '400', cursor: 'pointer' }}>
@@ -1172,52 +1187,104 @@ function StampingTool({ onBack }) {
     </button>
   );
 
-  // Build bates numbers for QC — same logic as the API route
-  const buildBatesFiles = () => {
-    if (!result?.processedFiles) return [];
-    return result.processedFiles.map((f, i) => ({
-      name: f.name || f,
-      batesNumber: `${prefix}${String(Number(startNumber) + i).padStart(Number(padLength), '0')}`,
-      pages: f.pageCount || f.pages || 0,
-    }));
-  };
-
   return (
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
+
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 4</span>
         <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>📄 Bates Stamping</h2>
+        <span style={{ background: '#f0f4ff', border: '1px solid #c7d2fe', color: '#4338ca', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '700' }}>🤖 AI-Powered</span>
       </div>
-      <p style={{ color: '#aaa', fontSize: '12px', marginBottom: '28px' }}>Upload folder → AI detects best corner → Stamps every page sequentially</p>
-      <div style={{ marginBottom: '20px' }}>
-        <label style={{ display: 'block', padding: '22px', background: files.length > 0 ? '#f0fff4' : '#f9f9f9', border: files.length > 0 ? '2px solid #38a169' : '2px dashed #ddd', borderRadius: '8px', cursor: 'pointer', textAlign: 'center' }}>
-          {files.length > 0 ? <span style={{ color: '#38a169', fontWeight: '700' }}>✅ {files.length} PDFs ready</span> : <span style={{ color: '#bbb' }}>📂 Click to select folder</span>}
+      <p style={{ color: '#aaa', fontSize: '12px', marginBottom: '24px' }}>
+        Upload a folder or pick individual PDFs → AI detects best corner → Stamps every page sequentially
+      </p>
+
+      {/* Dual upload boxes */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
+          <span style={{ fontSize: '28px' }}>📁</span>
+          <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '13px' }}>Upload Folder</span>
+          <span style={{ color: '#aaa', fontSize: '11px' }}>All PDFs inside the folder</span>
           <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect} style={{ display: 'none' }} />
         </label>
+        <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #276749', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
+          <span style={{ fontSize: '28px' }}>📄</span>
+          <span style={{ color: '#276749', fontWeight: '700', fontSize: '13px' }}>Upload PDFs</span>
+          <span style={{ color: '#aaa', fontSize: '11px' }}>Pick specific .pdf files</span>
+          <input type="file" multiple accept=".pdf" onChange={handleFileSelect} style={{ display: 'none' }} />
+        </label>
       </div>
+
+      {/* File selection list with checkboxes */}
+      {allFiles.length > 0 && (
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>
+              📄 Select PDFs ({selectedFiles.length} of {allFiles.length} selected)
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
+                {allChecked ? 'Deselect All' : 'Select All'}
+              </button>
+              <button onClick={clearAll} style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Clear</button>
+            </div>
+          </div>
+          <div style={{ border: '1px solid #eee', borderRadius: '10px', overflow: 'hidden', maxHeight: '280px', overflowY: 'auto' }}>
+            {allFiles.map((f, i) => (
+              <div key={f.name} onClick={() => toggleOne(f.name)}
+                style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '11px 16px', background: selected[f.name] ? '#f0f4ff' : (i % 2 === 0 ? 'white' : '#fafafa'), borderBottom: i < allFiles.length - 1 ? '1px solid #f0f0f0' : 'none', cursor: 'pointer' }}>
+                <div style={{ width: '18px', height: '18px', borderRadius: '4px', border: `2px solid ${selected[f.name] ? '#1a3c6e' : '#ccc'}`, background: selected[f.name] ? '#1a3c6e' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {selected[f.name] && <span style={{ color: 'white', fontSize: '11px', fontWeight: '700' }}>✓</span>}
+                </div>
+                <span style={{ fontSize: '13px', color: selected[f.name] ? '#1a3c6e' : '#555', fontWeight: selected[f.name] ? '600' : '400', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  📄 {f.name}
+                </span>
+                <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0 }}>{(f.size / 1024).toFixed(0)} KB</span>
+              </div>
+            ))}
+          </div>
+          {!someChecked && <p style={{ color: '#cc0000', fontSize: '12px', marginTop: '6px' }}>⚠️ Please select at least one PDF.</p>}
+        </div>
+      )}
+
+      {/* Password */}
       <div style={{ marginBottom: '20px', position: 'relative' }}>
-        <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="PDF Password (optional)" style={{ ...inputStyle, paddingRight: '44px' }} />
-        <button onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>
+        <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+          placeholder="PDF Password (optional — for encrypted PDFs)"
+          style={{ ...inputStyle, paddingRight: '44px' }} />
+        <button onClick={() => setShowPassword(!showPassword)}
+          style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>
           {showPassword ? '🙈' : '👁️'}
         </button>
       </div>
+
+      {/* Prefix & number */}
       <div style={{ marginBottom: '16px' }}>
         <input type="text" value={prefix} onChange={e => setPrefix(e.target.value)} placeholder="Prefix e.g. DOC-" style={inputStyle} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
         <input type="number" value={startNumber} onChange={e => setStartNumber(e.target.value)} placeholder="Start number" style={inputStyle} />
-        <input type="number" value={padLength} onChange={e => setPadLength(e.target.value)} placeholder="Digits" style={inputStyle} />
+        <input type="number" value={padLength}   onChange={e => setPadLength(e.target.value)}   placeholder="Digits (pad length)" style={inputStyle} />
       </div>
+
+      {/* Preview */}
       <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px' }}>
         <span style={{ color: '#888', fontSize: '12px' }}>Preview: </span>
         <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#1a3c6e', fontSize: '14px' }}>
           {prefix}{String(startNumber).padStart(Number(padLength), '0')}
         </span>
+        <span style={{ color: '#aaa', fontSize: '11px', marginLeft: '8px' }}>
+          → {prefix}{String(Number(startNumber) + Math.max(0, selectedFiles.length - 1)).padStart(Number(padLength), '0')} (est.)
+        </span>
       </div>
-      <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 16px', color: '#555', fontSize: '12px', cursor: 'pointer', marginBottom: '16px', width: '100%', textAlign: 'left' }}>
+
+      {/* Advanced */}
+      <button onClick={() => setShowAdvanced(!showAdvanced)}
+        style={{ background: 'none', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 16px', color: '#555', fontSize: '12px', cursor: 'pointer', marginBottom: '16px', width: '100%', textAlign: 'left' }}>
         {showAdvanced ? '▲' : '▼'} Advanced Settings
       </button>
+
       {showAdvanced && (
         <div style={{ background: '#f9f9f9', border: '1px solid #eee', borderRadius: '10px', padding: '20px', marginBottom: '20px' }}>
           <div style={{ marginBottom: '16px' }}>
@@ -1228,54 +1295,72 @@ function StampingTool({ onBack }) {
             <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#333', fontSize: '13px' }}>Stamp Color</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
               {optBtn('black', stampColor, setStampColor, '⚫ Black')}
-              {optBtn('red', stampColor, setStampColor, '🔴 Red')}
+              {optBtn('red',   stampColor, setStampColor, '🔴 Red')}
             </div>
           </div>
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#333', fontSize: '13px' }}>Font</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
               {optBtn('Helvetica', stampFont, setStampFont, 'Helvetica')}
-              {optBtn('Courier', stampFont, setStampFont, 'Courier')}
-              {optBtn('Times', stampFont, setStampFont, 'Times')}
+              {optBtn('Courier',   stampFont, setStampFont, 'Courier')}
+              {optBtn('Times',     stampFont, setStampFont, 'Times')}
             </div>
           </div>
           <div>
             <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#333', fontSize: '13px' }}>Corner Zone: {cornerPct}%</label>
             <input type="range" min="5" max="15" step="1" value={cornerPct} onChange={e => setCornerPct(Number(e.target.value))} style={{ width: '100%', accentColor: '#1a3c6e' }} />
+            <p style={{ color: '#aaa', fontSize: '11px', marginTop: '4px' }}>
+              AI checks the outer {cornerPct}% of each corner for existing content before placing the stamp.
+            </p>
           </div>
         </div>
       )}
-      {error && <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>❌ {error}</div>}
-      <button onClick={handleSubmit} disabled={processing || files.length === 0}
-        style={{ width: '100%', background: processing || files.length === 0 ? '#ccc' : '#1a3c6e', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: processing || files.length === 0 ? 'not-allowed' : 'pointer' }}>
-        {processing ? '⏳ Stamping…' : '🚀 Start Stamping'}
+
+      {error && (
+        <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>
+          ❌ {error}
+        </div>
+      )}
+
+      <button onClick={handleSubmit} disabled={processing || selectedFiles.length === 0}
+        style={{ width: '100%', background: processing || selectedFiles.length === 0 ? '#ccc' : '#1a3c6e', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: processing || selectedFiles.length === 0 ? 'not-allowed' : 'pointer' }}>
+        {processing
+          ? '⏳ Stamping with AI…'
+          : `🚀 Start Stamping${selectedFiles.length > 0 ? ` (${selectedFiles.length} PDF${selectedFiles.length !== 1 ? 's' : ''})` : ''}`}
       </button>
+
       {result && result.success && (
         <div style={{ marginTop: '28px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '16px' }}>
-            {[{ label: 'STAMPED', value: result.processedCount, color: '#276749' }, { label: 'WARNINGS', value: (result.fallbackFiles?.length || 0) + (result.scannedPDFs?.length || 0), color: '#b7791f' }, { label: 'SKIPPED', value: result.skippedCount || 0, color: '#c53030' }].map((s, i) => (
+            {[
+              { label: 'STAMPED',  value: result.processedCount, color: '#276749' },
+              { label: 'WARNINGS', value: (result.fallbackFiles?.length || 0) + (result.scannedPDFs?.length || 0), color: '#b7791f' },
+              { label: 'SKIPPED',  value: result.skippedCount || 0, color: '#c53030' },
+            ].map((s, i) => (
               <div key={i} style={{ background: '#f7f8fc', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
                 <p style={{ color: s.color, fontSize: '26px', fontWeight: '800', margin: '0' }}>{s.value}</p>
                 <p style={{ color: '#aaa', fontSize: '11px', margin: '4px 0 0', fontWeight: '600' }}>{s.label}</p>
               </div>
             ))}
           </div>
+
+          {result.totalStampedPages > 0 && (
+            <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#1a3c6e' }}>
+              📃 <strong>{result.totalStampedPages}</strong> pages stamped across {result.processedCount} files
+            </div>
+          )}
+
           <button onClick={() => downloadZip(result.zipFile)}
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Stamped PDFs (ZIP)
           </button>
-          {/* QC — FIX: batesNumber built from prefix + index, totalInputPages from files */}
-          <QCBadge
-            toolName="bates-stamp"
-            toolOutput={{
-              files: buildBatesFiles(),
-              stampedCount: result.processedCount || 0,
-              totalFiles: files.length,
-              totalInputPages: result.totalInputPages || 0,
-              totalStampedPages: result.totalStampedPages || 0,
-            }}
-            metadata={{}}
-          />
+
+          <QCBadge toolName="bates-stamp" toolOutput={buildQCData()} metadata={{}} />
+
+          <button onClick={clearAll}
+            style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #c6d4ea', borderRadius: '8px', color: '#1a3c6e', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+            ↺ Stamp Another Batch
+          </button>
         </div>
       )}
     </div>
@@ -1288,8 +1373,8 @@ function StampingTool({ onBack }) {
 function ExtractionTool({ onBack }) {
   const [activeType, setActiveType] = useState(null);
   if (activeType === 'invoice') return <InvoiceExtractTool onBack={() => setActiveType(null)} />;
-  if (activeType === 'bank') return <BankExtractTool onBack={() => setActiveType(null)} />;
-  if (activeType === 'tax') return <TaxExtractTool onBack={() => setActiveType(null)} />;
+  if (activeType === 'bank')    return <BankExtractTool    onBack={() => setActiveType(null)} />;
+  if (activeType === 'tax')     return <TaxExtractTool     onBack={() => setActiveType(null)} />;
   return (
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
@@ -1301,8 +1386,8 @@ function ExtractionTool({ onBack }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
         {[
           { type: 'invoice', icon: '🧾', title: 'Structured Invoices', desc: 'Upload invoice folder → Specify fields → Extract data → Excel output', active: true },
-          { type: 'bank', icon: '🏦', title: 'Bank Statements', desc: 'Upload folder → Select specific PDFs → Transactions extracted → Excel output', active: true },
-          { type: 'tax', icon: '📑', title: 'Tax Statements', desc: 'Coming soon', active: false },
+          { type: 'bank',    icon: '🏦', title: 'Bank Statements',     desc: 'Upload folder → Select specific PDFs → Transactions extracted → Excel output', active: true },
+          { type: 'tax',     icon: '📑', title: 'Tax Statements',      desc: 'Coming soon', active: false },
         ].map(opt => (
           <div key={opt.type} onClick={() => opt.active && setActiveType(opt.type)}
             style={{ background: '#f7f8fc', borderRadius: '12px', padding: '24px', cursor: opt.active ? 'pointer' : 'not-allowed', border: '2px solid #eee', opacity: opt.active ? 1 : 0.5 }}
@@ -1325,14 +1410,13 @@ function ExtractionTool({ onBack }) {
 
 // ==========================================
 // INVOICE EXTRACTION TOOL
-// FIX: toolName = "extraction-invoice", passes invoices[] from result
 // ==========================================
 function InvoiceExtractTool({ onBack }) {
-  const [files, setFiles] = useState([]);
-  const [fields, setFields] = useState('Invoice Date, Invoice Number, Customer Name, Vendor Name, Amount, Tax, Total Amount, Due Date');
+  const [files, setFiles]           = useState([]);
+  const [fields, setFields]         = useState('Invoice Date, Invoice Number, Customer Name, Vendor Name, Amount, Tax, Total Amount, Due Date');
   const [processing, setProcessing] = useState(false);
-  const [result, setResult] = useState(null);
-  const [progress, setProgress] = useState('');
+  const [result, setResult]         = useState(null);
+  const [progress, setProgress]     = useState('');
 
   const handleFolderSelect = (e) => {
     setFiles(Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.pdf')));
@@ -1347,7 +1431,7 @@ function InvoiceExtractTool({ onBack }) {
     for (let f of files) formData.append('pdfs', f);
     formData.append('fields', fields);
     try {
-      const res = await fetch('/api/extract-invoice', { method: 'POST', body: formData });
+      const res  = await fetch('/api/extract-invoice', { method: 'POST', body: formData });
       const data = await res.json();
       setResult(data); setProgress('');
     } catch (err) { setProgress('Error: ' + err.message); }
@@ -1356,7 +1440,7 @@ function InvoiceExtractTool({ onBack }) {
 
   const downloadExcel = (excelData) => {
     const bytes = Uint8Array.from(atob(excelData), c => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     Object.assign(document.createElement('a'), { href: url, download: 'invoice_extraction.xlsx' }).click();
   };
 
@@ -1398,17 +1482,9 @@ function InvoiceExtractTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Excel Report
           </button>
-          {/* QC — toolName: extraction-invoice, passes invoices[] from result */}
           <QCBadge
             toolName="extraction-invoice"
-            toolOutput={{
-              invoices: result.invoices || [],
-              summary: {
-                totalFiles: result.totalFiles,
-                successCount: result.successCount,
-                errorCount: result.errorCount,
-              },
-            }}
+            toolOutput={{ invoices: result.invoices || [], summary: { totalFiles: result.totalFiles, successCount: result.successCount, errorCount: result.errorCount } }}
             metadata={{ pageCount: result.pageCount }}
           />
         </div>
@@ -1424,14 +1500,13 @@ function InvoiceExtractTool({ onBack }) {
 
 // ==========================================
 // BANK STATEMENT EXTRACTION TOOL
-// FIX: toolName = "extraction-bank", passes qcData from API response
 // ==========================================
 function BankExtractTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [result, setResult]     = useState(null);
+  const [error, setError]       = useState('');
 
   const loadFiles = (fileList) => {
     const pdfs = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf'));
@@ -1449,9 +1524,9 @@ function BankExtractTool({ onBack }) {
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
-  const handleFileSelect = (e) => loadFiles(e.target.files);
-  const toggleOne = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll = () => {
+  const handleFileSelect   = (e) => loadFiles(e.target.files);
+  const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
+  const toggleAll  = () => {
     const allChecked = allFiles.every(f => selected[f.name]);
     const sel = {};
     allFiles.forEach(f => sel[f.name] = !allChecked);
@@ -1460,8 +1535,8 @@ function BankExtractTool({ onBack }) {
   const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
-  const allChecked = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
-  const someChecked = allFiles.some(f => selected[f.name]);
+  const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
+  const someChecked   = allFiles.some(f => selected[f.name]);
 
   const handleExtract = async () => {
     if (selectedFiles.length === 0) { setError('Please select at least one PDF.'); return; }
@@ -1469,7 +1544,7 @@ function BankExtractTool({ onBack }) {
     try {
       const formData = new FormData();
       selectedFiles.forEach(f => formData.append('pdfs', f));
-      const res = await fetch('/api/extract-bank', { method: 'POST', body: formData });
+      const res  = await fetch('/api/extract-bank', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok || data.error) { setError(data.error || 'Extraction failed.'); return; }
       setResult(data);
@@ -1480,8 +1555,8 @@ function BankExtractTool({ onBack }) {
   const handleDownload = () => {
     if (!result?.excelFile) return;
     const blob = new Blob([Uint8Array.from(atob(result.excelFile), c => c.charCodeAt(0))], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
     a.href = url; a.download = result.fileName || 'Bank_Statement_Extraction.xlsx'; a.click();
     URL.revokeObjectURL(url);
   };
@@ -1560,25 +1635,15 @@ function BankExtractTool({ onBack }) {
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Excel File
           </button>
-          {/* QC — toolName: extraction-bank, uses qcData from API response */}
-          {/* Your /api/extract-bank route must return qcData: { statements[], transactions[], dateGaps[], amountOutliers[] } */}
           <QCBadge
             toolName="extraction-bank"
             toolOutput={result.qcData || {
-              // Fallback if API hasn't been updated yet: build minimal qcData from summaries
               statements: (result.summaries || []).map(s => ({
-                file: s.file,
-                openingBalance: s.opening_balance || null,
-                closingBalance: s.closing_balance || null,
-                totalDebits: s.total_debits || null,
-                totalCredits: s.total_credits || null,
-                transactionCount: s.transaction_count || 0,
-                periodStart: null,
-                periodEnd: null,
+                file: s.file, openingBalance: s.opening_balance || null, closingBalance: s.closing_balance || null,
+                totalDebits: s.total_debits || null, totalCredits: s.total_credits || null,
+                transactionCount: s.transaction_count || 0, periodStart: null, periodEnd: null,
               })),
-              transactions: [],
-              dateGaps: [],
-              amountOutliers: [],
+              transactions: [], dateGaps: [], amountOutliers: [],
             }}
             metadata={{ pageCount: result.pageCount }}
           />
