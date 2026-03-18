@@ -74,6 +74,16 @@ LAYOUT: Handle any column order. Merge multi-line transactions into one row. Inf
 
 RUNNING BALANCE: Use the statement's own printed running balance column if available. If not available, calculate cumulative balance after each transaction.
 
+CRITICAL — NO DUPLICATE TRANSACTIONS:
+Bank statements (especially Chase) list transactions across multiple pages and sections. Extract each transaction EXACTLY ONCE.
+
+De-duplication rules:
+1. CHECK NUMBERS: Each check number appears only ONCE. If check 1827 appears in the Checks Paid section on page 2 and page 3, it is the SAME check — include it once at the date it was paid.
+2. TRANSACTION IDs: Online transfers include a Transaction# (e.g. Transaction#: 7629714868). Each Transaction# is unique — never include the same Transaction# twice even if it appears in multiple places on the statement.
+3. SAME DATE + AMOUNT + DESCRIPTION: If two rows have identical date, amount, and description, it is a duplicate — include only one.
+4. SECTION TOTALS: Lines like "Total Checks Paid $239,816.80" are summary lines, NOT transactions — never include them.
+5. SELF-CHECK BEFORE RETURNING: Scan your output for (a) duplicate check numbers, (b) duplicate Transaction# IDs, (c) identical date+amount+description pairs. Remove any duplicates found.
+
 OUTPUT — return ONLY this minified JSON:
 {"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"total_debits":0,"total_credits":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022"}]}
 
@@ -88,8 +98,9 @@ STRICT RULES:
 - check_number: "" if not applicable
 - Include ALL transactions from ALL pages, do NOT skip any
 - Do NOT include balance summary rows as transactions
-- Do NOT duplicate transactions
+- NEVER duplicate any transaction (see de-duplication rules above)
 - Unreadable values: 0 for numbers, "" for strings
+- total_debits and total_credits come from the PDF summary section — NOT recomputed from rows
 - Return ONLY the JSON, nothing else`;
 
 // ── AI RECONCILIATION ────────────────────────────────────────
