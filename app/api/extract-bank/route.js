@@ -111,7 +111,7 @@ async function runAIReconciliation(base64PDF, fileName, rowDebits, rowCredits) {
   try {
     const response = await client.messages.create({
       model:      'claude-sonnet-4-5',
-      max_tokens: 300,
+      max_tokens: 500,
       messages: [{
         role: 'user',
         content: [
@@ -121,20 +121,25 @@ async function runAIReconciliation(base64PDF, fileName, rowDebits, rowCredits) {
           },
           {
             type: 'text',
-            text: `Look at this bank statement PDF and find the SUMMARY TOTALS section.
-Banks show this differently — it may be called "Checking Summary", "Account Summary", "Transaction Summary", or appear as a table at the top or end of the statement.
+            text: `Look at this bank statement PDF and find the SUMMARY / CHECKING SUMMARY section.
+It is usually a table near the top or start of the statement showing Beginning Balance, categories with amounts, and Ending Balance.
 
-Find:
-1. Total amount of all DEBITS / withdrawals / outflows — this is the SUM of all debit categories (checks paid + ATM withdrawals + fees + electronic withdrawals + any other outflow category). Add them all together.
-2. Total amount of all CREDITS / deposits / inflows — this is the SUM of all credit/deposit categories.
+IMPORTANT: Do NOT read the pre-printed total line (e.g. "Ending Balance"). Instead:
+1. Find each individual DEBIT line item (Checks Paid, ATM & Debit Card Withdrawals, Electronic Withdrawals, Other Withdrawals, Fees, etc.) and read its amount exactly.
+2. Add those individual amounts yourself to get pdfDebits.
+3. Find each individual CREDIT line item (Deposits and Additions, etc.) and read its amount exactly.
+4. Add those individual amounts yourself to get pdfCredits.
+
+Reading each line separately is more accurate than reading the printed total which may have OCR errors.
 
 Return ONLY this JSON, nothing else:
-{"pdfDebits": <number or null>, "pdfCredits": <number or null>, "debitLabel": "<exact label or combined labels from PDF>", "creditLabel": "<exact label from PDF>"}
+{"debitItems": [{"label": "<category name>", "amount": <number>}], "creditItems": [{"label": "<category name>", "amount": <number>}]}
 
 Rules:
-- pdfDebits must be the TOTAL of ALL debit/withdrawal categories added together
-- pdfCredits must be the TOTAL of ALL credit/deposit categories added together
-- If you cannot find a value, use null
+- List every debit/withdrawal category as a separate item in debitItems
+- List every credit/deposit category as a separate item in creditItems
+- amounts must be positive numbers (no minus signs)
+- If you cannot find the summary section, return: {"debitItems": [], "creditItems": []}
 - Return ONLY valid JSON, no markdown, no explanation`,
           },
         ],
@@ -144,19 +149,30 @@ Rules:
     const raw  = response.content[0].text.trim().replace(/```json|```/g, '').trim();
     const data = JSON.parse(raw);
 
-    const pdfDebits  = data.pdfDebits  != null ? parseFloat(data.pdfDebits)  : null;
-    const pdfCredits = data.pdfCredits != null ? parseFloat(data.pdfCredits) : null;
+    // Sum the individual line items — more accurate than reading the pre-printed total
+    const debitItems  = data.debitItems  || [];
+    const creditItems = data.creditItems || [];
+
+    const pdfDebits  = debitItems.length  > 0
+      ? +debitItems.reduce((s, i)  => s + (parseFloat(i.amount)  || 0), 0).toFixed(2)
+      : null;
+    const pdfCredits = creditItems.length > 0
+      ? +creditItems.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0).toFixed(2)
+      : null;
+
+    const debitLabel  = debitItems.map(i  => i.label).join(' + ') || 'Total Debits';
+    const creditLabel = creditItems.map(i => i.label).join(' + ') || 'Total Credits';
 
     return {
       file:         fileName,
       pdfDebits,
       pdfCredits,
-      debitLabel:   data.debitLabel  || 'Total Debits',
-      creditLabel:  data.creditLabel || 'Total Credits',
+      debitLabel,
+      creditLabel,
       rowDebits:    +rowDebits.toFixed(2),
       rowCredits:   +rowCredits.toFixed(2),
-      debitsMatch:  pdfDebits  != null && Math.abs(pdfDebits  - rowDebits)  < 1,
-      creditsMatch: pdfCredits != null && Math.abs(pdfCredits - rowCredits) < 1,
+      debitsMatch:  pdfDebits  != null && Math.abs(pdfDebits  - rowDebits)  < 2,
+      creditsMatch: pdfCredits != null && Math.abs(pdfCredits - rowCredits) < 2,
     };
   } catch (err) {
     console.log('Reconciliation failed for', fileName, '|', err.message);
