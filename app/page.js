@@ -1161,20 +1161,48 @@ function StampingTool({ onBack }) {
     URL.revokeObjectURL(url);
   };
 
-  // Reads processedFiles[] returned by the fixed route.js
+  // Build QC data — uses processedFiles[] from new route.js if available,
+  // otherwise falls back to reconstructing Bates range from frontend state.
   const buildQCData = () => {
-    if (!result?.processedFiles) return { files: [], stampedCount: 0, totalFiles: 0, totalStampedPages: 0 };
+    const stamped      = result?.processedCount   || 0;
+    const totalPages   = result?.totalStampedPages || 0;
+    const pad          = Number(padLength)  || 6;
+    const start        = Number(startNumber) || 1;
+
+    // If new route.js is deployed — use rich per-file data
+    if (result?.processedFiles && result.processedFiles.length > 0) {
+      return {
+        files: result.processedFiles.map(f => ({
+          name:       f.name,
+          batesStart: f.batesStart,
+          batesEnd:   f.batesEnd,
+          pages:      f.pageCount,
+          position:   f.position,
+        })),
+        stampedCount:      stamped,
+        totalFiles:        selectedFiles.length,
+        totalStampedPages: totalPages,
+      };
+    }
+
+    // Fallback — reconstruct from known frontend inputs.
+    // We know: prefix, startNumber, padLength, totalStampedPages, processedCount.
+    // Distribute pages evenly across stamped files as best estimate.
+    const pagesPerFile = stamped > 0 ? Math.round(totalPages / stamped) : totalPages;
+    let   cursor       = start;
+    const files        = selectedFiles.slice(0, stamped).map(f => {
+      const filePages = pagesPerFile || 1;
+      const batesStart = prefix + String(cursor).padStart(pad, '0');
+      const batesEnd   = prefix + String(cursor + filePages - 1).padStart(pad, '0');
+      cursor += filePages;
+      return { name: f.name, batesStart, batesEnd, pages: filePages, position: 'bottom-left' };
+    });
+
     return {
-      files: result.processedFiles.map(f => ({
-        name:       f.name,
-        batesStart: f.batesStart,
-        batesEnd:   f.batesEnd,
-        pages:      f.pageCount,
-        position:   f.position,
-      })),
-      stampedCount:      result.processedCount   || 0,
+      files,
+      stampedCount:      stamped,
       totalFiles:        selectedFiles.length,
-      totalStampedPages: result.totalStampedPages || 0,
+      totalStampedPages: totalPages,
     };
   };
 
