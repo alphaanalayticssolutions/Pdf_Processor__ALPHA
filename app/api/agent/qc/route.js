@@ -255,9 +255,37 @@ function runRuleChecks(toolName, toolOutput) {
       }
     }
 
-    // Running balance errors
+    // Running balance errors — only flag when statement-level balance math ALSO fails.
+    //
+    // WHY: Many banks (Chase, BofA) do not print a running balance column.
+    // Claude computes running_balance in the order it sees transactions, which
+    // is often TYPE-sorted (deposits first, then checks, then ATM, then fees)
+    // not DATE-sorted. QC recomputes in date order → mismatch every row →
+    // 20+ false positives on a perfectly clean statement.
+    //
+    // If opening + credits - debits = closing ✅, the amounts are correct and
+    // running balance mismatches are pure sort-order artifacts — suppress them.
+    // Only show running balance errors when balance math ALSO fails, which
+    // indicates genuine OCR corruption in the transaction amounts themselves.
+    const statementsWithBadMath = new Set(
+      statements
+        .filter((s) => {
+          if (s.openingBalance == null || s.closingBalance == null ||
+              s.totalDebits == null || s.totalCredits == null) return false;
+          const expected = +(s.openingBalance + s.totalCredits - s.totalDebits).toFixed(2);
+          return Math.abs(expected - s.closingBalance) > 1;
+        })
+        .map((s) => s.file)
+    );
+
     (toolOutput.runningBalanceErrors || []).forEach((e) => {
-      findings.push(issue(`${e.file} row ${e.row}: running balance error — expected $${e.expected}, found $${e.found}`, SEV.MAJOR));
+      // Only surface this error if the statement's overall math is also wrong
+      if (statementsWithBadMath.has(e.file)) {
+        findings.push(issue(
+          `${e.file} row ${e.row}: running balance error — expected $${e.expected}, found $${e.found}`,
+          SEV.MAJOR
+        ));
+      }
     });
 
     // Column swap detection
