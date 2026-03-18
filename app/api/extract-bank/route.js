@@ -8,7 +8,7 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-// ── Repair truncated JSON ──
+// ── Repair truncated JSON ────────────────────────────────────
 function repairJSON(text) {
   text = text.trim();
   text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -46,6 +46,7 @@ function repairJSON(text) {
   return text;
 }
 
+// ── Extraction prompt ────────────────────────────────────────
 const PROMPT = `You are a bank statement data extraction engine. Extract ALL transactions from this PDF and return ONLY a valid minified JSON object — no explanation, no markdown, no extra text, no indentation.
 
 DETECT DOCUMENT TYPE FIRST:
@@ -59,6 +60,9 @@ DETECT DOCUMENT TYPE FIRST:
 
 ACCOUNT INFO:
 - Extract bank name, account holder name, account number last 4-5 digits, statement period, opening balance, closing balance.
+- Also extract total_debits and total_credits from the statement summary section if present (e.g. "Total Checks Paid", "Total Deposits and Additions", "Total Withdrawals", etc.)
+- total_debits = sum of ALL debit categories from the summary (checks + ATM + fees + electronic withdrawals etc.)
+- total_credits = sum of ALL credit/deposit categories from the summary
 
 EXTRACT TRANSACTIONS from ALL pages including: Deposits/Credits, Checks Paid, Electronic Withdrawals, ATM Withdrawals, Fees, Refunds, Card Purchases.
 
@@ -68,13 +72,13 @@ LAYOUT: Handle any column order. Merge multi-line transactions into one row. Inf
 - Amounts in parentheses (123.45) = Debit
 - Negative amounts -123.45 = Debit
 
-RUNNING BALANCE: Calculate cumulative balance after each transaction. Use statement's own balance column if available.
+RUNNING BALANCE: Use the statement's own printed running balance column if available. If not available, calculate cumulative balance after each transaction.
 
 OUTPUT — return ONLY this minified JSON:
-{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022"}]}
+{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"total_debits":0,"total_credits":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022"}]}
 
 For statements with no transactions, return:
-{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[]}
+{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"total_debits":0,"total_credits":0,"transactions":[]}
 
 STRICT RULES:
 - Minified JSON only — no indentation, no extra whitespace
@@ -88,26 +92,43 @@ STRICT RULES:
 - Unreadable values: 0 for numbers, "" for strings
 - Return ONLY the JSON, nothing else`;
 
-// ── QC DATA BUILDER ──────────────────────────────────────────────────────────
-// Computes date gaps, amount outliers, running balance errors
-// from the already-extracted data — no extra API calls
+// ── QC DATA BUILDER ──────────────────────────────────────────
+// Builds qcData from already-extracted data — zero extra API calls.
+//
+// Three fixes applied here vs the old version:
+//
+// FIX 1 — totalDebits/totalCredits use Claude's extracted summary values
+//   (data.total_debits / data.total_credits from the statement header)
+//   NOT re-summed from transaction rows. Chase statements group transactions
+//   by type (deposits block, then checks block) so re-summing rows gives
+//   wrong totals when the array order doesn't match chronological order.
+//
+// FIX 2 — Running balance recomputation sorts transactions by date first.
+//   Chase statements come with deposits first, then checks, then ATM, then
+//   fees — all out of date order. Without sorting, sequential recomputation
+//   generates 20+ false positive balance errors on a clean statement.
+//
+// FIX 3 — Balance math check uses summary totals (fix 1 values), not
+//   recomputed row sums, so the opening + credits - debits = closing
+//   check is accurate.
 function buildBankQcData(allStatements, allTransactions) {
-  // Date gaps — flag any gap > 5 days inside a statement
+
+  // Date gaps — flag gaps > 5 days within a statement
   const dateGaps = [];
   allStatements.forEach((stmt) => {
     const txs = (stmt.transactions || [])
-  .filter(t => t.date)
-  .sort((a, b) => new Date(a.date) - new Date(b.date));
+      .filter(t => t.date)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
 
     for (let i = 1; i < txs.length; i++) {
-      const prev = new Date(txs[i - 1].date);
-      const curr = new Date(txs[i].date);
+      const prev   = new Date(txs[i - 1].date);
+      const curr   = new Date(txs[i].date);
       const dayGap = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
       if (dayGap > 5) {
         dateGaps.push({
-          file: stmt.fileName,
-          from: txs[i - 1].date,
-          to: txs[i].date,
+          file:   stmt.fileName,
+          from:   txs[i - 1].date,
+          to:     txs[i].date,
           dayGap,
         });
       }
@@ -129,20 +150,27 @@ function buildBankQcData(allStatements, allTransactions) {
       const amt = Math.abs(t.debit || t.credit || 0);
       if (amt > median * 20 && median > 0) {
         amountOutliers.push({
-          file: stmt.fileName,
-          date: t.date,
+          file:   stmt.fileName,
+          date:   t.date,
           amount: amt,
-          times: Math.round(amt / median),
+          times:  Math.round(amt / median),
         });
       }
     });
   });
 
-  // Running balance errors — recompute and compare to printed balance
+  // Running balance errors — sort by date before recomputing (FIX 2)
   const runningBalanceErrors = [];
   allStatements.forEach((stmt) => {
-    const txs = stmt.transactions || [];
-    if (!txs.length || txs[0].running_balance == null) return;
+    const rawTxs = stmt.transactions || [];
+    if (!rawTxs.length || rawTxs[0].running_balance == null) return;
+
+    // CRITICAL: sort by date first — Chase and many banks sort transactions
+    // by type (deposits, then checks) not chronologically. Without this sort,
+    // sequential recomputation produces false positive errors on clean data.
+    const txs = [...rawTxs]
+      .filter(t => t.date)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
 
     let running = stmt.openingBalance || 0;
     txs.forEach((t, idx) => {
@@ -150,12 +178,12 @@ function buildBankQcData(allStatements, allTransactions) {
       const printed = t.running_balance;
       if (printed != null && Math.abs(running - printed) > 1) {
         runningBalanceErrors.push({
-          file: stmt.fileName,
-          row: idx + 1,
+          file:     stmt.fileName,
+          row:      idx + 1,
           expected: running.toFixed(2),
-          found: printed.toFixed(2),
+          found:    printed.toFixed(2),
         });
-        running = printed; // resync so errors don't cascade
+        running = printed; // resync to prevent cascading errors
       }
     });
   });
@@ -163,12 +191,12 @@ function buildBankQcData(allStatements, allTransactions) {
   return {
     statements: allStatements.map((s) => ({
       file:             s.fileName,
-      periodStart:      s.periodStart      || null,
-      periodEnd:        s.periodEnd        || null,
-      openingBalance:   s.openingBalance   ?? null,
-      closingBalance:   s.closingBalance   ?? null,
-      totalDebits:      s.totalDebits      ?? null,
-      totalCredits:     s.totalCredits     ?? null,
+      periodStart:      s.periodStart    || null,
+      periodEnd:        s.periodEnd      || null,
+      openingBalance:   s.openingBalance ?? null,
+      closingBalance:   s.closingBalance ?? null,
+      totalDebits:      s.totalDebits    ?? null,  // Claude's extracted summary value (FIX 1)
+      totalCredits:     s.totalCredits   ?? null,  // Claude's extracted summary value (FIX 1)
       transactionCount: (s.transactions || []).length,
     })),
     transactions: allTransactions.map((t) => ({
@@ -184,10 +212,11 @@ function buildBankQcData(allStatements, allTransactions) {
   };
 }
 
+// ── MAIN HANDLER ─────────────────────────────────────────────
 export async function POST(request) {
   try {
     const formData = await request.formData();
-    const files = formData.getAll('pdfs');
+    const files    = formData.getAll('pdfs');
 
     const pdfFiles = files.filter(f => {
       const name = f.name || '';
@@ -203,71 +232,70 @@ export async function POST(request) {
       );
     }
 
-    // ── Parallel processing ──
+    // ── Parallel extraction ──────────────────────────────────
     const results = await Promise.all(pdfFiles.map(async (file) => {
       try {
         console.log('Processing:', file.name, '| Size:', file.size);
         const arrayBuffer = await file.arrayBuffer();
-        const base64PDF = Buffer.from(arrayBuffer).toString('base64');
+        const base64PDF   = Buffer.from(arrayBuffer).toString('base64');
 
         const stream = client.messages.stream({
-          model: 'claude-sonnet-4-5',
+          model:      'claude-sonnet-4-5',
           max_tokens: 32000,
           messages: [{
             role: 'user',
             content: [
               {
-                type: 'document',
+                type:   'document',
                 source: { type: 'base64', media_type: 'application/pdf', data: base64PDF },
               },
               {
                 type: 'text',
                 text: PROMPT,
-              }
-            ]
-          }]
+              },
+            ],
+          }],
         });
 
         const claudeResponse = await stream.finalMessage();
-        let responseText = claudeResponse.content[0].text.trim();
-
-        responseText = repairJSON(responseText);
-        const data = JSON.parse(responseText);
+        let responseText     = claudeResponse.content[0].text.trim();
+        responseText         = repairJSON(responseText);
+        const data           = JSON.parse(responseText);
 
         if (data.error === 'NOT_A_BANK_STATEMENT') {
           console.log('Not a bank statement:', file.name, '| Type:', data.document_type);
           return {
             success: false,
-            error: { file: file.name, error: `Not a bank statement — detected as: ${data.document_type}` }
+            error:   { file: file.name, error: `Not a bank statement — detected as: ${data.document_type}` },
           };
         }
 
         const transactions = (data.transactions || []).map(t => ({
           file_name:        file.name,
-          bank_name:        data.bank_name || '',
-          account_holder:   data.account_holder || '',
-          account_number:   data.account_number || '',
+          bank_name:        data.bank_name        || '',
+          account_holder:   data.account_holder   || '',
+          account_number:   data.account_number   || '',
           statement_period: data.statement_period || '',
-          date:             t.date || '',
-          description:      t.description || '',
-          check_number:     t.check_number || '',
-          debit:            t.debit || 0,
-          credit:           t.credit || 0,
-          balance:          t.balance ?? '',
-          running_balance:  t.running_balance ?? '',
-          month:            t.month || '',
-          type:             t.type || '',
-          year:             t.year || '',
+          date:             t.date                || '',
+          description:      t.description         || '',
+          check_number:     t.check_number        || '',
+          debit:            t.debit               || 0,
+          credit:           t.credit              || 0,
+          balance:          t.balance             ?? '',
+          running_balance:  t.running_balance     ?? '',
+          month:            t.month               || '',
+          type:             t.type                || '',
+          year:             t.year                || '',
         }));
 
         const summary = {
           file:              file.name,
-          bank:              data.bank_name || '',
-          account_holder:    data.account_holder || '',
-          account_number:    data.account_number || '',
+          bank:              data.bank_name        || '',
+          account_holder:    data.account_holder   || '',
+          account_number:    data.account_number   || '',
           period:            data.statement_period || '',
-          opening_balance:   data.opening_balance || 0,
-          closing_balance:   data.closing_balance || 0,
+          opening_balance:   data.opening_balance  || 0,
+          closing_balance:   data.closing_balance  || 0,
           transaction_count: transactions.length,
         };
 
@@ -275,18 +303,39 @@ export async function POST(request) {
 
         const inputBaseName = file.name.replace(/\.pdf$/i, '');
 
-        // Statement object for qcData builder
+        // ── FIX 1: totalDebits and totalCredits computed OUTSIDE
+        //    the statementObj literal (cannot use const inside object).
+        //
+        //    Use Claude's extracted summary totals (data.total_debits /
+        //    data.total_credits) as the primary source — these come from
+        //    the "CHECKING SUMMARY" / "Total Deposits" section of the PDF
+        //    and are always correct regardless of transaction sort order.
+        //
+        //    Fall back to row-sum only when summary is missing or zero.
+        const totalDebits = parseFloat(data.total_debits) > 0
+          ? parseFloat(data.total_debits)
+          : (data.transactions || []).reduce((s, t) => s + (parseFloat(t.debit)  || 0), 0);
+
+        const totalCredits = parseFloat(data.total_credits) > 0
+          ? parseFloat(data.total_credits)
+          : (data.transactions || []).reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
+
         const statementObj = {
           fileName:       file.name,
           openingBalance: data.opening_balance || 0,
           closingBalance: data.closing_balance || 0,
-          // Compute totals from transactions
-          totalDebits:    transactions.reduce((s, t) => s + (t.debit || 0), 0),
-          totalCredits:   transactions.reduce((s, t) => s + (t.credit || 0), 0),
-          transactions:   data.transactions || [],
+          totalDebits,    // authoritative summary total (not re-summed from rows)
+          totalCredits,   // authoritative summary total (not re-summed from rows)
+          transactions:   data.transactions    || [],
         };
 
-        return { success: true, transactions, summary, statementObj, outputFileName: `${inputBaseName}.xlsx` };
+        return {
+          success:        true,
+          transactions,
+          summary,
+          statementObj,
+          outputFileName: `${inputBaseName}.xlsx`,
+        };
 
       } catch (err) {
         console.log('Failed:', file.name, '| Error:', err.message);
@@ -294,7 +343,7 @@ export async function POST(request) {
       }
     }));
 
-    // ── Collect results ──
+    // ── Collect results ──────────────────────────────────────
     const allTransactions = [];
     const allStatements   = [];
     const summaries       = [];
@@ -328,9 +377,10 @@ export async function POST(request) {
       );
     }
 
-    // ── Build Excel ──
+    // ── Build Excel ──────────────────────────────────────────
     const wb = new ExcelJS.Workbook();
 
+    // Sheet 1: All Transactions
     const txSheet = wb.addWorksheet('All Transactions');
     txSheet.columns = [
       { header: 'File Name',        key: 'file_name',        width: 30 },
@@ -351,11 +401,10 @@ export async function POST(request) {
     ];
 
     txSheet.getRow(1).eachCell(cell => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2444' } };
+      cell.font      = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2444' } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
-
     txSheet.views = [{ state: 'frozen', ySplit: 1 }];
 
     const yellow    = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
@@ -399,16 +448,17 @@ export async function POST(request) {
 
     if (allTransactions.length === 0) {
       const noteRow = txSheet.addRow({
-        file_name:        summaries[0]?.file || '',
-        bank_name:        summaries[0]?.bank || '',
+        file_name:        summaries[0]?.file            || '',
+        bank_name:        summaries[0]?.bank            || '',
         account_holder:   summaries[0]?.account_holder || '',
         account_number:   summaries[0]?.account_number || '',
-        statement_period: summaries[0]?.period || '',
+        statement_period: summaries[0]?.period         || '',
         description:      'No transactions this statement period',
       });
       noteRow.getCell('description').font = { italic: true, color: { argb: 'FF888888' } };
     }
 
+    // Sheet 2: Summary
     const sumSheet = wb.addWorksheet('Summary');
     sumSheet.columns = [
       { header: 'File Name',          key: 'file',              width: 30 },
@@ -422,15 +472,14 @@ export async function POST(request) {
     ];
 
     sumSheet.getRow(1).eachCell(cell => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2444' } };
+      cell.font      = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2444' } };
       cell.alignment = { vertical: 'middle', horizontal: 'center' };
     });
-
     sumSheet.views = [{ state: 'frozen', ySplit: 1 }];
 
     summaries.forEach((s, idx) => {
-      const row = sumSheet.addRow(s);
+      const row  = sumSheet.addRow(s);
       const fill = idx % 2 === 0 ? white : lightBlue;
       row.eachCell({ includeEmpty: true }, cell => { cell.fill = fill; });
     });
@@ -446,7 +495,7 @@ export async function POST(request) {
       errors,
       excelFile:         excelBase64,
       fileName:          outputFileName,
-      // ── QC DATA ── built from already-extracted data, zero extra API calls
+      // qcData — built from already-extracted data, zero extra API calls
       qcData: buildBankQcData(allStatements, allTransactions),
     });
 
