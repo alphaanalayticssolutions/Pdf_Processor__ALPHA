@@ -96,8 +96,8 @@ function buildBankQcData(allStatements, allTransactions) {
   const dateGaps = [];
   allStatements.forEach((stmt) => {
     const txs = (stmt.transactions || [])
-      .filter((t) => t.date)
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
+  .filter(t => t.date)
+  .sort((a, b) => new Date(a.date) - new Date(b.date));
 
     for (let i = 1; i < txs.length; i++) {
       const prev = new Date(txs[i - 1].date);
