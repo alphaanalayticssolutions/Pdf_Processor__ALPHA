@@ -88,6 +88,102 @@ STRICT RULES:
 - Unreadable values: 0 for numbers, "" for strings
 - Return ONLY the JSON, nothing else`;
 
+// ── QC DATA BUILDER ──────────────────────────────────────────────────────────
+// Computes date gaps, amount outliers, running balance errors
+// from the already-extracted data — no extra API calls
+function buildBankQcData(allStatements, allTransactions) {
+  // Date gaps — flag any gap > 5 days inside a statement
+  const dateGaps = [];
+  allStatements.forEach((stmt) => {
+    const txs = (stmt.transactions || [])
+      .filter((t) => t.date)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    for (let i = 1; i < txs.length; i++) {
+      const prev = new Date(txs[i - 1].date);
+      const curr = new Date(txs[i].date);
+      const dayGap = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
+      if (dayGap > 5) {
+        dateGaps.push({
+          file: stmt.fileName,
+          from: txs[i - 1].date,
+          to: txs[i].date,
+          dayGap,
+        });
+      }
+    }
+  });
+
+  // Amount outliers — flag amounts > 20x the median (catches OCR extra zeros)
+  const amountOutliers = [];
+  allStatements.forEach((stmt) => {
+    const amounts = (stmt.transactions || [])
+      .map((t) => Math.abs(t.debit || t.credit || 0))
+      .filter((a) => a > 0)
+      .sort((a, b) => a - b);
+
+    if (amounts.length < 5) return;
+    const median = amounts[Math.floor(amounts.length / 2)];
+
+    (stmt.transactions || []).forEach((t) => {
+      const amt = Math.abs(t.debit || t.credit || 0);
+      if (amt > median * 20 && median > 0) {
+        amountOutliers.push({
+          file: stmt.fileName,
+          date: t.date,
+          amount: amt,
+          times: Math.round(amt / median),
+        });
+      }
+    });
+  });
+
+  // Running balance errors — recompute and compare to printed balance
+  const runningBalanceErrors = [];
+  allStatements.forEach((stmt) => {
+    const txs = stmt.transactions || [];
+    if (!txs.length || txs[0].running_balance == null) return;
+
+    let running = stmt.openingBalance || 0;
+    txs.forEach((t, idx) => {
+      running = running + (t.credit || 0) - (t.debit || 0);
+      const printed = t.running_balance;
+      if (printed != null && Math.abs(running - printed) > 1) {
+        runningBalanceErrors.push({
+          file: stmt.fileName,
+          row: idx + 1,
+          expected: running.toFixed(2),
+          found: printed.toFixed(2),
+        });
+        running = printed; // resync so errors don't cascade
+      }
+    });
+  });
+
+  return {
+    statements: allStatements.map((s) => ({
+      file:             s.fileName,
+      periodStart:      s.periodStart      || null,
+      periodEnd:        s.periodEnd        || null,
+      openingBalance:   s.openingBalance   ?? null,
+      closingBalance:   s.closingBalance   ?? null,
+      totalDebits:      s.totalDebits      ?? null,
+      totalCredits:     s.totalCredits     ?? null,
+      transactionCount: (s.transactions || []).length,
+    })),
+    transactions: allTransactions.map((t) => ({
+      date:           t.date,
+      description:    t.description,
+      debit:          t.debit,
+      credit:         t.credit,
+      runningBalance: t.running_balance ?? null,
+    })),
+    dateGaps,
+    amountOutliers,
+    runningBalanceErrors,
+  };
+}
+
 export async function POST(request) {
   try {
     const formData = await request.formData();
@@ -138,7 +234,6 @@ export async function POST(request) {
         responseText = repairJSON(responseText);
         const data = JSON.parse(responseText);
 
-        // ── Only reject genuinely non-bank documents ──
         if (data.error === 'NOT_A_BANK_STATEMENT') {
           console.log('Not a bank statement:', file.name, '| Type:', data.document_type);
           return {
@@ -179,7 +274,19 @@ export async function POST(request) {
         console.log('Success:', file.name, '| Transactions:', transactions.length);
 
         const inputBaseName = file.name.replace(/\.pdf$/i, '');
-        return { success: true, transactions, summary, outputFileName: `${inputBaseName}.xlsx` };
+
+        // Statement object for qcData builder
+        const statementObj = {
+          fileName:       file.name,
+          openingBalance: data.opening_balance || 0,
+          closingBalance: data.closing_balance || 0,
+          // Compute totals from transactions
+          totalDebits:    transactions.reduce((s, t) => s + (t.debit || 0), 0),
+          totalCredits:   transactions.reduce((s, t) => s + (t.credit || 0), 0),
+          transactions:   data.transactions || [],
+        };
+
+        return { success: true, transactions, summary, statementObj, outputFileName: `${inputBaseName}.xlsx` };
 
       } catch (err) {
         console.log('Failed:', file.name, '| Error:', err.message);
@@ -189,13 +296,15 @@ export async function POST(request) {
 
     // ── Collect results ──
     const allTransactions = [];
-    const summaries = [];
-    const errors = [];
-    let outputFileName = 'bank_extraction.xlsx';
+    const allStatements   = [];
+    const summaries       = [];
+    const errors          = [];
+    let outputFileName    = 'bank_extraction.xlsx';
 
     results.forEach(r => {
       if (r.success) {
         allTransactions.push(...r.transactions);
+        allStatements.push(r.statementObj);
         summaries.push(r.summary);
         if (outputFileName === 'bank_extraction.xlsx' && r.outputFileName) {
           outputFileName = r.outputFileName;
@@ -205,7 +314,6 @@ export async function POST(request) {
       }
     });
 
-    // Multiple PDFs → combine names
     if (results.filter(r => r.success).length > 1) {
       const names = results
         .filter(r => r.success && r.outputFileName)
@@ -213,7 +321,6 @@ export async function POST(request) {
       outputFileName = names.join('_') + '.xlsx';
     }
 
-    // ── If ALL files failed ──
     if (summaries.length === 0) {
       return Response.json(
         { error: 'No valid bank statements found.', details: errors },
@@ -224,7 +331,6 @@ export async function POST(request) {
     // ── Build Excel ──
     const wb = new ExcelJS.Workbook();
 
-    // Sheet 1: All Transactions
     const txSheet = wb.addWorksheet('All Transactions');
     txSheet.columns = [
       { header: 'File Name',        key: 'file_name',        width: 30 },
@@ -244,7 +350,6 @@ export async function POST(request) {
       { header: 'Year',             key: 'year',             width: 10 },
     ];
 
-    // Header row styling
     txSheet.getRow(1).eachCell(cell => {
       cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2444' } };
@@ -292,7 +397,6 @@ export async function POST(request) {
       }
     });
 
-    // If no transactions, add a placeholder note row
     if (allTransactions.length === 0) {
       const noteRow = txSheet.addRow({
         file_name:        summaries[0]?.file || '',
@@ -305,7 +409,6 @@ export async function POST(request) {
       noteRow.getCell('description').font = { italic: true, color: { argb: 'FF888888' } };
     }
 
-    // Sheet 2: Summary
     const sumSheet = wb.addWorksheet('Summary');
     sumSheet.columns = [
       { header: 'File Name',          key: 'file',              width: 30 },
@@ -336,13 +439,15 @@ export async function POST(request) {
     const excelBase64 = Buffer.from(excelBuffer).toString('base64');
 
     return Response.json({
-      success: true,
-      totalFiles: pdfFiles.length,
+      success:           true,
+      totalFiles:        pdfFiles.length,
       totalTransactions: allTransactions.length,
       summaries,
       errors,
-      excelFile: excelBase64,
-      fileName: outputFileName,
+      excelFile:         excelBase64,
+      fileName:          outputFileName,
+      // ── QC DATA ── built from already-extracted data, zero extra API calls
+      qcData: buildBankQcData(allStatements, allTransactions),
     });
 
   } catch (err) {

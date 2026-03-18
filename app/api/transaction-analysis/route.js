@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
 import Anthropic from '@anthropic-ai/sdk';
 
-export const maxDuration = 300; // Vercel Pro supports up to 300s
+export const maxDuration = 300;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -53,7 +53,6 @@ No markdown, no explanation outside the JSON array.
 
 Pairs to evaluate:
 {PAIRS}`;
-
 
 const INSIGHTS_PROMPT = `You are a financial data analyst. I will give you a transaction pivot table summary.
 Your job is to analyze it and write a clear, concise insight report.
@@ -136,10 +135,8 @@ function monthYearSortKey(label) {
 
 // ─── HEATMAP COLOR ─────────────────────────────────────────────────────────────
 function heatmapARGB(value, max) {
-  if (max === 0 || value === 0) return 'FFFFFFFF'; // 0 = pure white
+  if (max === 0 || value === 0) return 'FFFFFFFF';
   const ratio = value / max;
-  // Non-zero: light blue (190,210,235) → dark navy (31,56,100)
-  // Even value=1 shows visible colour instead of near-white
   const r = Math.round(190 + ratio * (31 - 190));
   const g = Math.round(210 + ratio * (56 - 210));
   const b = Math.round(235 + ratio * (100 - 235));
@@ -147,7 +144,7 @@ function heatmapARGB(value, max) {
   return `FF${hex(r)}${hex(g)}${hex(b)}`;
 }
 
-// ─── DEBIT / CREDIT COLUMN DETECTOR (heuristic, no AI needed) ────────────────
+// ─── DEBIT / CREDIT COLUMN DETECTOR ──────────────────────────────────────────
 function detectDebitCreditCols(headers) {
   const lower = headers.map(h => h.toLowerCase().trim());
   const find = (keywords) => {
@@ -156,13 +153,10 @@ function detectDebitCreditCols(headers) {
     const idx2 = lower.findIndex(h => keywords.some(k => h.includes(k)));
     return idx2 !== -1 ? headers[idx2] : null;
   };
-  return {
-    debitCol:  find(['debit']),
-    creditCol: find(['credit']),
-  };
+  return { debitCol: find(['debit']), creditCol: find(['credit']) };
 }
 
-// ─── DESCRIPTION COLUMN DETECTOR ────────────────────────────────────────────
+// ─── DESCRIPTION COLUMN DETECTOR ─────────────────────────────────────────────
 function detectDescriptionCol(headers) {
   const lower = headers.map(h => h.toLowerCase().trim());
   const keywords = ['description', 'desc', 'memo', 'narrative', 'details', 'transaction description', 'particulars', 'remarks', 'note'];
@@ -173,22 +167,11 @@ function detectDescriptionCol(headers) {
 }
 
 // ─── INTERBANK TRANSFER MATCHER ───────────────────────────────────────────────
-
-// Convert any Date to a timezone-safe YYYY-MM-DD string
-// Using getFullYear/Month/Date (local) avoids UTC-vs-local shift
-// that causes Excel serial dates to appear as "day before"
 function toDateKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
-}
-
-// Add N days to a YYYY-MM-DD string, return new YYYY-MM-DD string
-function addDays(dateKey, n) {
-  const d = new Date(dateKey + 'T00:00:00'); // force local midnight parse
-  d.setDate(d.getDate() + n);
-  return toDateKey(d);
 }
 
 function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
@@ -208,8 +191,8 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
     if (!date) continue;
     const dateKey = toDateKey(date);
     const desc = descCol ? String(row[descCol] ?? '').trim() : '';
-
     const serial = row.__serial || null;
+
     if (debitCol && creditCol) {
       const d = parseAmt(row[debitCol]);
       const c = parseAmt(row[creditCol]);
@@ -223,7 +206,6 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
     }
   }
 
-  // Build lookup map: amount → credit indices
   const creditsByAmt = new Map();
   credits.forEach((c, i) => {
     const key = c.amount.toFixed(2);
@@ -233,8 +215,6 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
 
   const candidates = [];
   const usedCredits = new Set();
-  // Window: collect pairs where credit is within 0–3 days of debit
-  // Claude will do the final same-day / next-day / not-transfer verdict
   const MAX_DAY_WINDOW = 3;
 
   for (const debit of debits) {
@@ -249,21 +229,16 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
       const diffDays = Math.round((creditMs - debitMs) / 86400000);
       if (diffDays < 0 || diffDays > MAX_DAY_WINDOW) continue;
       candidates.push({
-        fromAccount:   debit.account,
-        toAccount:     credit.account,
-        amount:        debit.amount,
-        debitDate:     debit.date,
-        creditDate:    credit.date,
-        debitDateKey:  debit.dateKey,
-        creditDateKey: credit.dateKey,
-        debitDesc:     debit.desc,
-        creditDesc:    credit.desc,
-        debitSerial:   debit.serial,
-        creditSerial:  credit.serial,
+        fromAccount: debit.account, toAccount: credit.account,
+        amount: debit.amount,
+        debitDate: debit.date, creditDate: credit.date,
+        debitDateKey: debit.dateKey, creditDateKey: credit.dateKey,
+        debitDesc: debit.desc, creditDesc: credit.desc,
+        debitSerial: debit.serial, creditSerial: credit.serial,
         diffDays,
       });
       usedCredits.add(i);
-      break; // one best credit per debit
+      break;
     }
   }
 
@@ -271,70 +246,52 @@ function collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol) {
   return candidates;
 }
 
-// ─── CLAUDE: VERIFY INTERBANK TRANSFERS (batched) ────────────────────────────
+// ─── CLAUDE: VERIFY INTERBANK TRANSFERS ──────────────────────────────────────
 async function verifyTransfersWithClaude(candidates) {
   if (candidates.length === 0) return [];
 
   const fmtDate = (d) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-  const BATCH_SIZE = 50; // keep each prompt well within context + response limits
-  // Build all batches upfront
+  const BATCH_SIZE = 50;
   const batches = [];
-  for (let batchStart = 0; batchStart < candidates.length; batchStart += BATCH_SIZE) {
-    batches.push({ start: batchStart, items: candidates.slice(batchStart, batchStart + BATCH_SIZE) });
+  for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+    batches.push({ start: i, items: candidates.slice(i, i + BATCH_SIZE) });
   }
 
-  // Run all batch Claude calls in PARALLEL — cuts total time from ~70s to ~15s
   const batchResults = await Promise.all(batches.map(async ({ start, items }) => {
     const pairs = items.map((c, idx) => ({
-      index:        start + idx,
-      from_account: c.fromAccount,
-      to_account:   c.toAccount,
-      amount:       `$${c.amount.toFixed(2)}`,
-      debit_date:   fmtDate(c.debitDate),
-      credit_date:  fmtDate(c.creditDate),
-      debit_desc:   c.debitDesc  || '(no description)',
-      credit_desc:  c.creditDesc || '(no description)',
+      index: start + idx,
+      from_account: c.fromAccount, to_account: c.toAccount,
+      amount: `$${c.amount.toFixed(2)}`,
+      debit_date: fmtDate(c.debitDate), credit_date: fmtDate(c.creditDate),
+      debit_desc: c.debitDesc || '(no description)',
+      credit_desc: c.creditDesc || '(no description)',
     }));
 
     const prompt = TRANSFER_VERIFICATION_PROMPT.replace('{PAIRS}', JSON.stringify(pairs, null, 2));
-
     try {
       const msg = await anthropic.messages.create({
-        model:      'claude-haiku-4-5',
-        max_tokens: 4000,
-        messages:   [{ role: 'user', content: prompt }],
+        model: 'claude-haiku-4-5', max_tokens: 4000,
+        messages: [{ role: 'user', content: prompt }],
       });
       const text = (msg.content[0]?.text || '').replace(/```json|```/g, '').trim();
       return JSON.parse(text);
     } catch {
-      return items.map(() => ({
-        is_transfer: false,
-        match_type:  'Unknown',
-        confidence:  'Low',
-        reason:      'AI verification unavailable for this batch.',
-      }));
+      return items.map(() => ({ is_transfer: false, match_type: 'Unknown', confidence: 'Low', reason: 'AI verification unavailable.' }));
     }
   }));
 
-  // Flatten results in order
   const allVerdicts = batchResults.flat();
-
-  // Merge verdicts back into candidates
   return candidates.map((c, idx) => ({ ...c, ...allVerdicts[idx] }));
 }
 
-// ─── TAB 3: MATCHED INTERBANK TRANSFERS ───────────────────────────────────────
+// ─── TAB 3: INTERBANK TRANSFERS ───────────────────────────────────────────────
 function addInterbankSheet(wb, verified) {
   const ws3 = wb.addWorksheet('Matched Interbank Transfers');
-
   const COLS   = ['From Account','To Account','Amount ($)','Debit Date','Credit Date','Debit Description','Credit Description','AI Verification','Match Type','Confidence','Reason','Debit Serial','Credit Serial'];
-  const WIDTHS = [20, 20, 14, 14, 14, 38, 38, 16, 13, 13, 50, 13, 13];
+  const WIDTHS = [20,20,14,14,14,38,38,16,13,13,50,13,13];
   const NUM_COLS = COLS.length;
-
-  // Truncate long strings so rows stay a fixed height
   const trunc = (s, n) => s && s.length > n ? s.slice(0, n) + '…' : (s || '');
 
-  // Header row — navy
   const hdrRow = ws3.addRow(COLS);
   hdrRow.height = 30;
   hdrRow.eachCell(cell => {
@@ -344,12 +301,10 @@ function addInterbankSheet(wb, verified) {
     cell.border    = { top: { style: 'thin', color: { argb: 'FFB0B0B0' } }, bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } }, left: { style: 'thin', color: { argb: 'FFB0B0B0' } }, right: { style: 'thin', color: { argb: 'FFB0B0B0' } } };
   });
 
-  // Sorted: confirmed transfers first, then non-transfers
   const sortOrder = { true: 0, false: 1 };
   const transfers = [...verified].sort((a, b) => (sortOrder[String(a.is_transfer)] ?? 1) - (sortOrder[String(b.is_transfer)] ?? 1));
 
   if (verified.length === 0) {
-    ws3.addRow(['No matched interbank transfers detected.', ...Array(NUM_COLS - 1).fill('')]);
     ws3.mergeCells('A2:M2');
     const cell = ws3.getCell('A2');
     cell.value     = 'No matched interbank transfers detected.';
@@ -358,7 +313,6 @@ function addInterbankSheet(wb, verified) {
     ws3.getRow(2).height = 24;
   } else {
     const fmtDate = (d) => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-
     const matchBg  = { 'Same Day': 'FFE2EFDA', 'Next Day': 'FFFFF2CC', 'Not Transfer': 'FFFCE4D6', 'Unknown': 'FFF2F2F2' };
     const confBg   = { 'High': 'FFE2EFDA', 'Medium': 'FFFFF2CC', 'Low': 'FFFCE4D6' };
     const verifyBg = { true: 'FFE2EFDA', false: 'FFFCE4D6' };
@@ -366,25 +320,15 @@ function addInterbankSheet(wb, verified) {
 
     transfers.forEach((m, idx) => {
       const rowBg = idx % 2 === 0 ? 'FFFFFFFF' : 'FFDCE6F1';
-
-      // Truncate descriptions to keep row height fixed at 18px
       const r = ws3.addRow([
-        trunc(m.fromAccount, 25),
-        trunc(m.toAccount, 25),
-        m.amount,
-        fmtDate(m.debitDate),
-        fmtDate(m.creditDate),
-        trunc(m.debitDesc, 55),
-        trunc(m.creditDesc, 55),
+        trunc(m.fromAccount, 25), trunc(m.toAccount, 25), m.amount,
+        fmtDate(m.debitDate), fmtDate(m.creditDate),
+        trunc(m.debitDesc, 55), trunc(m.creditDesc, 55),
         m.is_transfer ? '✅ Transfer' : '❌ Not Transfer',
-        m.match_type  || '',
-        m.confidence  || '',
-        trunc(m.reason, 80),
-        m.debitSerial  ?? '',
-        m.creditSerial ?? '',
+        m.match_type || '', m.confidence || '', trunc(m.reason, 80),
+        m.debitSerial ?? '', m.creditSerial ?? '',
       ]);
       r.height = 18;
-
       r.eachCell((cell, colNum) => {
         let bg = rowBg;
         if (colNum === 3)  { cell.numFmt = '$#,##0.00'; }
@@ -398,17 +342,12 @@ function addInterbankSheet(wb, verified) {
       });
     });
 
-    // Summary row
     ws3.addRow([]);
     const confirmed = transfers.filter(t => t.is_transfer).length;
     const nonMatch  = transfers.filter(t => !t.is_transfer).length;
     const totalAmt  = Math.round(transfers.filter(t => t.is_transfer).reduce((s, m) => s + m.amount, 0) * 100) / 100;
-    const summaryRow = ws3.addRow([
-      `✅ ${confirmed} confirmed transfer(s)   ❌ ${nonMatch} non-match(es)   🤖 Claude AI verified`,
-      '', totalAmt, '', '', '', '', '', '', '', '', '', ''
-    ]);
+    const summaryRow = ws3.addRow([`✅ ${confirmed} confirmed transfer(s)   ❌ ${nonMatch} non-match(es)   🤖 Claude AI verified`, '', totalAmt, '', '', '', '', '', '', '', '', '', '']);
     summaryRow.height = 22;
-    // Style all summary cells
     summaryRow.eachCell((cell, colNum) => {
       cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
       cell.font      = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF002060' } };
@@ -427,8 +366,7 @@ function addInterbankSheet(wb, verified) {
 async function detectColumnsWithClaude(headers) {
   const prompt = COLUMN_DETECTION_PROMPT.replace('{HEADERS}', JSON.stringify(headers));
   const msg = await anthropic.messages.create({
-    model: 'claude-haiku-4-5',
-    max_tokens: 300,
+    model: 'claude-haiku-4-5', max_tokens: 300,
     messages: [{ role: 'user', content: prompt }],
   });
   const text = msg.content[0]?.text?.trim() || '';
@@ -439,10 +377,7 @@ async function detectColumnsWithClaude(headers) {
 // ─── CLAUDE: AI INSIGHTS ──────────────────────────────────────────────────────
 async function generateInsightsWithClaude(pivot, monthYears, accounts, grandTotal) {
   const accountSummary = accounts.map(acc => {
-    const entries = monthYears
-      .map(my => `${my}: ${pivot[acc][my] || 0}`)
-      .filter(e => !e.endsWith(': 0'))
-      .join(', ');
+    const entries = monthYears.map(my => `${my}: ${pivot[acc][my] || 0}`).filter(e => !e.endsWith(': 0')).join(', ');
     const total = monthYears.reduce((s, my) => s + (pivot[acc][my] || 0), 0);
     return `  ${acc} (total: ${total}) → ${entries || 'no activity'}`;
   }).join('\n');
@@ -461,8 +396,7 @@ async function generateInsightsWithClaude(pivot, monthYears, accounts, grandTota
     .replace('{MONTHLY_TOTALS}', monthlyTotals);
 
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1500,
+    model: 'claude-sonnet-4-5', max_tokens: 1500,
     messages: [{ role: 'user', content: prompt }],
   });
   return msg.content[0]?.text?.trim() || 'No insights generated.';
@@ -474,7 +408,6 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, mat
   wb.creator = 'Alpha Analytics Solutions';
   wb.created = new Date();
 
-  // ── TAB 1: Account Transaction Heatmap ──────────────────────────────────────
   const ws = wb.addWorksheet('Account Transaction Heatmap');
   const totalCols = 1 + monthYears.length + 1;
 
@@ -506,7 +439,6 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, mat
       const isAccCol   = colNum === 1;
       const isTotalCol = colNum === totalCols;
       const count      = isAccCol ? null : (isTotalCol ? rowTotal : (pivot[acc][monthYears[colNum - 2]] || 0));
-
       if (!isAccCol && !isTotalCol) {
         const ratio = count / (maxCount || 1);
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: heatmapARGB(count, maxCount) } };
@@ -524,9 +456,7 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, mat
   });
 
   const totalRowVals = ['TOTAL'];
-  monthYears.forEach(my => {
-    totalRowVals.push(accounts.reduce((s, acc) => s + (pivot[acc][my] || 0), 0));
-  });
+  monthYears.forEach(my => totalRowVals.push(accounts.reduce((s, acc) => s + (pivot[acc][my] || 0), 0)));
   totalRowVals.push(grandTotal);
   const totalRow = ws.addRow(totalRowVals);
   totalRow.height = 24;
@@ -549,9 +479,8 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, mat
   ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 1, activeCell: 'B2' }];
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: totalCols } };
 
-  // ── TAB 2: AI Insights ──────────────────────────────────────────────────────
+  // Tab 2: AI Insights
   const ws2 = wb.addWorksheet('AI Insights');
-
   ws2.mergeCells('A1:G1');
   const titleCell = ws2.getCell('A1');
   titleCell.value     = '🤖 AI Transaction Insights — Powered by Claude';
@@ -567,7 +496,6 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, mat
   subCell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0FE' } };
   subCell.alignment = { horizontal: 'center', vertical: 'middle' };
   ws2.getRow(2).height = 22;
-
   ws2.addRow([]);
 
   const lines = insights.split('\n');
@@ -579,7 +507,6 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, mat
     const cleanLine = line.replace(/\*\*/g, '').replace(/^#{1,3}\s/, '').trim();
     cell.value     = cleanLine;
     cell.alignment = { wrapText: true, vertical: 'top', horizontal: 'left', indent: isHeader ? 0 : 1 };
-
     if (isHeader && cleanLine) {
       cell.font = { name: 'Arial', bold: true, size: 12, color: { argb: 'FF002060' } };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
@@ -592,27 +519,40 @@ async function buildExcel(pivot, monthYears, accounts, insights, grandTotal, mat
     }
     rowIdx++;
   }
-
   rowIdx += 2;
   ws2.mergeCells(`A${rowIdx}:G${rowIdx}`);
   const footerCell = ws2.getCell(`A${rowIdx}`);
   footerCell.value     = 'Analysis generated by Claude AI (Anthropic) • Alpha Analytics Solutions';
   footerCell.font      = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF999999' } };
   footerCell.alignment = { horizontal: 'center' };
-
   ws2.getColumn('A').width = 100;
 
-  // ── TAB 3: Matched Interbank Transfers ────────────────────────────────────────
   addInterbankSheet(wb, matches);
-
   return wb;
+}
+
+// ─── QC DATA BUILDER ──────────────────────────────────────────────────────────
+// Built from the pivot already computed — zero extra API calls
+function buildTxAnalysisQcData(pivot, monthYears, accounts, matches, fileCount) {
+  return {
+    fileCount: fileCount || 0,
+    accounts: accounts.map((acc) => ({
+      name: acc,
+      totalTransactions: monthYears.reduce((s, my) => s + (pivot[acc][my] || 0), 0),
+      monthlyData: monthYears.map((my) => ({
+        month: my,
+        count: pivot[acc][my] || 0,
+      })),
+    })),
+    // Only transfers Claude marked as not a real transfer (unmatched counterparts)
+    flaggedTransfers: (matches || []).filter((m) => !m.is_transfer),
+  };
 }
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────────
 export async function POST(req) {
   try {
     const formData = await req.formData();
-    // Accept multiple files (field name: 'files') — merge all rows before pivot
     const uploadedFiles = formData.getAll('files');
     if (!uploadedFiles || uploadedFiles.length === 0) {
       return NextResponse.json({ error: 'No file uploaded.' }, { status: 400 });
@@ -622,18 +562,13 @@ export async function POST(req) {
     const ACCOUNT_KEYWORDS = ['account', 'acc', 'acct', 'account number', 'account id'];
     const AMOUNT_KEYWORDS  = ['amount', 'debit', 'credit', 'balance', 'sum'];
 
-    // Helper: extract rows from ALL valid sheets in one Excel file
-    // A sheet is "valid" if it scores >= 3 (has date + account/amount keywords)
-    // This ensures Bank Transactions AND Credit Card sheets are both included
     async function extractRowsFromExcel(buffer) {
       const inWb = new ExcelJS.Workbook();
       await inWb.xlsx.load(buffer);
 
       const scoreSheet = (sheet) => {
         const hdrs = [];
-        sheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
-          hdrs.push(String(cell.value ?? '').toLowerCase().trim());
-        });
+        sheet.getRow(1).eachCell({ includeEmpty: false }, cell => { hdrs.push(String(cell.value ?? '').toLowerCase().trim()); });
         let score = 0;
         if (hdrs.some(h => DATE_KEYWORDS.some(k => h.includes(k))))    score += 3;
         if (hdrs.some(h => ACCOUNT_KEYWORDS.some(k => h.includes(k)))) score += 3;
@@ -643,13 +578,10 @@ export async function POST(req) {
 
       const fileRows = [];
       for (const sheet of inWb.worksheets) {
-        const { score, hdrs } = scoreSheet(sheet);
-        if (score < 3) continue; // skip non-transaction sheets (e.g. Tracker)
-
+        const { score } = scoreSheet(sheet);
+        if (score < 3) continue;
         const headers = [];
-        sheet.getRow(1).eachCell({ includeEmpty: false }, cell => {
-          headers.push(String(cell.value ?? '').trim());
-        });
+        sheet.getRow(1).eachCell({ includeEmpty: false }, cell => { headers.push(String(cell.value ?? '').trim()); });
         sheet.eachRow((row, rowNum) => {
           if (rowNum === 1) return;
           const obj = {};
@@ -664,7 +596,6 @@ export async function POST(req) {
     }
 
     let rows = [];
-
     for (const file of uploadedFiles) {
       const fileName = file.name.toLowerCase();
       const arrayBuffer = await file.arrayBuffer();
@@ -679,11 +610,8 @@ export async function POST(req) {
 
     if (rows.length === 0) return NextResponse.json({ error: 'No data found in the uploaded file.' }, { status: 400 });
 
-    // Assign a unique serial number to every row in the merged dataset
     rows = rows.map((row, idx) => ({ ...row, __serial: idx + 1 }));
 
-    // Collect real column names across ALL rows (multi-sheet files can have different columns)
-    // Exclude internal __ keys so Claude doesn't get confused by __serial etc.
     const headerSet = new Set();
     for (const row of rows) {
       for (const k of Object.keys(row)) {
@@ -692,7 +620,6 @@ export async function POST(req) {
     }
     const headers = [...headerSet];
 
-    // ── Claude Call 1: Detect columns ─────────────────────────────────────────
     let colMap;
     try {
       colMap = await detectColumnsWithClaude(headers);
@@ -700,10 +627,9 @@ export async function POST(req) {
       return NextResponse.json({ error: `Claude column detection failed: ${e.message}` }, { status: 500 });
     }
 
-    if (!colMap.account_col) return NextResponse.json({ error: 'Claude could not identify an Account ID / Account Number column. Please check your column headers.' }, { status: 400 });
-    if (!colMap.date_col)    return NextResponse.json({ error: 'Claude could not identify a Transaction Date column. Please check your column headers.' }, { status: 400 });
+    if (!colMap.account_col) return NextResponse.json({ error: 'Claude could not identify an Account ID / Account Number column.' }, { status: 400 });
+    if (!colMap.date_col)    return NextResponse.json({ error: 'Claude could not identify a Transaction Date column.' }, { status: 400 });
 
-    // ── Build pivot ───────────────────────────────────────────────────────────
     const pivot = {};
     const monthYearSet = new Set();
 
@@ -726,23 +652,17 @@ export async function POST(req) {
     const accounts   = Object.keys(pivot).sort();
     const grandTotal = accounts.reduce((s, acc) => s + monthYears.reduce((t, my) => t + (pivot[acc][my] || 0), 0), 0);
 
-    // ── Detect debit/credit/description columns ──────────────────────────────────
     const { debitCol, creditCol } = detectDebitCreditCols(headers);
     const descCol = detectDescriptionCol(headers);
-
-    // ── Collect candidates (same amount, different accounts, ≤3 day window) ──────
     const candidates = collectTransferCandidates(rows, colMap, debitCol, creditCol, descCol);
 
-    // ── Claude Call 3: Verify each candidate pair ─────────────────────────────────
     let matches = [];
     try {
       matches = await verifyTransfersWithClaude(candidates);
     } catch (e) {
-      // If Claude verification fails, fall back to raw candidates with unknown verdict
       matches = candidates.map(c => ({ ...c, is_transfer: false, match_type: 'Unknown', confidence: 'Low', reason: 'AI verification failed: ' + e.message }));
     }
 
-    // ── Claude Call 2: Generate insights ──────────────────────────────────────
     let insights = '';
     try {
       insights = await generateInsightsWithClaude(pivot, monthYears, accounts, grandTotal);
@@ -750,16 +670,19 @@ export async function POST(req) {
       insights = `AI insights could not be generated: ${e.message}\n\nThe heatmap pivot in Tab 1 is complete and accurate.`;
     }
 
-    // ── Build & return Excel ──────────────────────────────────────────────────
     const wb = await buildExcel(pivot, monthYears, accounts, insights, grandTotal, matches);
     const outBuffer = await wb.xlsx.writeBuffer();
 
-    return new NextResponse(outBuffer, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': 'attachment; filename="Transaction_Analysis.xlsx"'
-      }
+    // ── CHANGED: return JSON with base64 instead of raw blob ──
+    // page.js TransactionAnalysisTool already handles this format
+    const excelBase64 = Buffer.from(outBuffer).toString('base64');
+
+    return NextResponse.json({
+      success:   true,
+      excelFile: excelBase64,
+      fileName:  'Transaction_Analysis.xlsx',
+      // ── QC DATA ── built from pivot already computed, zero extra API calls
+      qcData: buildTxAnalysisQcData(pivot, monthYears, accounts, matches, uploadedFiles.length),
     });
 
   } catch (err) {

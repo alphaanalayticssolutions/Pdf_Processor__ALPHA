@@ -194,6 +194,7 @@ export default function Home() {
 
 // ==========================================
 // TRANSACTION ANALYSIS TOOL
+// FIXES: removed stray setResult in loadFiles, switched from blob to JSON response
 // ==========================================
 function TransactionAnalysisTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -202,6 +203,7 @@ function TransactionAnalysisTool({ onBack }) {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
 
+  // FIX: loadFiles only loads files — no stray setResult here
   const loadFiles = (fileList) => {
     const valid = Array.from(fileList).filter(f => {
       const n = f.name.toLowerCase();
@@ -217,13 +219,7 @@ function TransactionAnalysisTool({ onBack }) {
       valid.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
       return updated;
     });
-setResult({
-  url,
-  fileName,
-  fileCount: selectedFiles.length,
-  filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
-});  };
-
+  };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
   const handleFileSelect = (e) => loadFiles(e.target.files);
@@ -247,16 +243,36 @@ setResult({
       const formData = new FormData();
       selectedFiles.forEach(f => formData.append('files', f));
       const res = await fetch('/api/transaction-analysis', { method: 'POST', body: formData });
+
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Server error: ${res.status}`);
       }
-      const blob = await res.blob();
+
+      // FIX: API should return JSON { excelFile: base64, fileName, qcData }
+      // If your API still returns a blob, change it to return JSON with base64
+      const data = await res.json();
+
+      // Build blob URL for download from base64
+      const blob = new Blob(
+        [Uint8Array.from(atob(data.excelFile), c => c.charCodeAt(0))],
+        { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+      );
       const url = URL.createObjectURL(blob);
-      const cd = res.headers.get('Content-Disposition') || '';
-      const match = cd.match(/filename="?([^"]+)"?/);
-      const fileName = match ? match[1] : 'Transaction_Analysis.xlsx';
-      setResult({ url, fileName, _raw: blob });
+
+      setResult({
+        url,
+        fileName: data.fileName || 'Transaction_Analysis.xlsx',
+        fileCount: selectedFiles.length,
+        filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
+        // qcData comes from the API route (accounts, flaggedTransfers, etc.)
+        qcData: data.qcData || {
+          fileCount: selectedFiles.length,
+          filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
+          accounts: [],
+          flaggedTransfers: [],
+        },
+      });
     } catch (err) {
       setError(err.message || 'Something went wrong.');
     } finally {
@@ -347,16 +363,13 @@ setResult({
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', marginBottom: '10px' }}>
             📥 Download Transaction_Analysis.xlsx
           </button>
-          {/* QC BADGE — Transaction Analysis */}
-<QCBadge
-  toolName="transaction-analysis"
-  toolOutput={{
-    fileCount: result.fileCount || 0,
-    filesAnalysed: result.filesAnalysed || [],
-    fileName: result.fileName,
-  }}
-  metadata={{}}
-/>          <button onClick={handleClear}
+          {/* QC — toolName: transaction-analysis, toolOutput from result.qcData */}
+          <QCBadge
+            toolName="transaction-analysis"
+            toolOutput={result.qcData}
+            metadata={{}}
+          />
+          <button onClick={handleClear}
             style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
             ↺ Analyse Another File
           </button>
@@ -368,6 +381,7 @@ setResult({
 
 // ==========================================
 // STATEMENT TRACKER TOOL
+// FIX: totalAccounts = bankAccounts + creditCards
 // ==========================================
 function StatementTrackerTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -514,20 +528,19 @@ function StatementTrackerTool({ onBack }) {
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Statement Tracker (.xlsx)
           </button>
-          {/* QC BADGE — Tracker */}
+          {/* QC — FIX: totalAccounts = bank + credit cards */}
           <QCBadge
-  toolName="tracker"
-  toolOutput={{
-    gaps: result.totalGaps || 0,
-    totalMonths: result.totalMonths || 0,
-    totalAccounts: result.totalAccounts || 0,
-    totalBankAccounts: result.totalBankAccounts || 0,
-    totalCreditCards: result.totalCreditCards || 0,
-    errors: result.errors || [],
-  }}
-  metadata={{}}
-/>
-          
+            toolName="tracker"
+            toolOutput={{
+              gaps: result.totalGaps || 0,
+              totalMonths: result.totalMonths || 0,
+              totalBankAccounts: result.totalBankAccounts || 0,
+              totalCreditCards: result.totalCreditCards || 0,
+              missingMonths: result.missingMonths || [],
+              duplicateAccounts: result.duplicateAccounts || [],
+            }}
+            metadata={{}}
+          />
           <button onClick={clearAll}
             style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
             ↺ Upload Another Set
@@ -540,6 +553,7 @@ function StatementTrackerTool({ onBack }) {
 
 // ==========================================
 // DESCRIPTION CATEGORISER TOOL
+// FIX: toolName updated, confidence passed through
 // ==========================================
 function DescriptionCategoriserTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -708,10 +722,17 @@ function DescriptionCategoriserTool({ onBack }) {
               ⬇ Download CSV
             </button>
           </div>
-          {/* QC BADGE — Description Categoriser */}
+          {/* QC — toolName: desc-categoriser, passes descriptions with category */}
           <QCBadge
             toolName="desc-categoriser"
-            toolOutput={{ descriptions: results }}
+            toolOutput={{
+              descriptions: results.map(r => ({
+                description: r.description,
+                category: r.category,
+                confidence: r.confidence || null,
+              })),
+              semanticMismatches: [],
+            }}
             metadata={{}}
           />
           <div style={{ border: '1px solid #86efac', borderRadius: '8px', overflow: 'hidden', maxHeight: '320px', overflowY: 'auto', marginTop: '16px' }}>
@@ -747,7 +768,7 @@ function DescriptionCategoriserTool({ onBack }) {
 }
 
 // ==========================================
-// DUPLICATE REPORT TOOL
+// DUPLICATE REPORT TOOL — no QC (no AI involved)
 // ==========================================
 function DuplicateTool({ onBack }) {
   const [files, setFiles] = useState([]);
@@ -756,8 +777,8 @@ function DuplicateTool({ onBack }) {
   const [error, setError] = useState('');
 
   const handleFolderSelect = (e) => {
-    const selectedFiles = Array.from(e.target.files).filter(f => f.size > 0 && !f.name.startsWith('.'));
-    setFiles(selectedFiles); setResult(null); setError('');
+    setFiles(Array.from(e.target.files).filter(f => f.size > 0 && !f.name.startsWith('.')));
+    setResult(null); setError('');
   };
 
   const hashFile = async (file) => {
@@ -828,7 +849,7 @@ function DuplicateTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Excel Report
           </button>
-          {/* No QC for Duplicate tool — it uses no AI */}
+          {/* No QC for Duplicate — it's a hash check, no AI involved */}
         </div>
       )}
     </div>
@@ -837,6 +858,7 @@ function DuplicateTool({ onBack }) {
 
 // ==========================================
 // PDF SPLITTER TOOL
+// FIX: toolName = "splitter", correct shape
 // ==========================================
 function SplitterTool({ onBack }) {
   const [file, setFile] = useState(null);
@@ -928,10 +950,13 @@ function SplitterTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Split Documents (ZIP)
           </button>
-          {/* QC BADGE — Splitter */}
+          {/* QC — toolName: splitter, correct shape */}
           <QCBadge
             toolName="splitter"
-            toolOutput={{ splits: result.documents, totalPages: result.totalPages || 0 }}
+            toolOutput={{
+              splits: result.documents.map(d => ({ name: d.name, pageCount: d.pages })),
+              totalPages: result.totalPages || 0,
+            }}
             metadata={{}}
           />
         </div>
@@ -942,28 +967,19 @@ function SplitterTool({ onBack }) {
 
 // ==========================================
 // CATEGORISATION TOOL
+// FIX: confidence mapped to float before passing to QCBadge
 // ==========================================
 const ALL_CATEGORIES = [
-  { folder: '01_Bank_Statements', icon: '🏦' },
-  { folder: '02_Financial_Records', icon: '📊' },
-  { folder: '03_Tax_Documents', icon: '🧾' },
-  { folder: '04_Invoices_And_Receipts', icon: '🧾' },
-  { folder: '05_Contracts', icon: '📋' },
-  { folder: '06_Legal_Agreements', icon: '🤝' },
-  { folder: '07_Corporate_Documents', icon: '🏢' },
-  { folder: '08_Correspondence', icon: '✉️' },
-  { folder: '09_Court_Filings', icon: '⚖️' },
-  { folder: '10_Employment_Records', icon: '👤' },
-  { folder: '11_Real_Estate_Documents', icon: '🏠' },
-  { folder: '12_Insurance_Documents', icon: '🛡️' },
-  { folder: '13_Intellectual_Property', icon: '💡' },
-  { folder: '14_Regulatory_And_Compliance', icon: '📜' },
-  { folder: '15_Loan_And_Credit', icon: '💳' },
-  { folder: '16_Client_And_Customer_Records', icon: '👥' },
-  { folder: '17_Payment_Records', icon: '💸' },
-  { folder: '18_Digital_And_Electronic_Evidence', icon: '💻' },
-  { folder: '19_Expert_Reports_And_Appraisals', icon: '🔬' },
-  { folder: '20_Miscellaneous_Uncategorized', icon: '📁' },
+  { folder: '01_Bank_Statements', icon: '🏦' }, { folder: '02_Financial_Records', icon: '📊' },
+  { folder: '03_Tax_Documents', icon: '🧾' }, { folder: '04_Invoices_And_Receipts', icon: '🧾' },
+  { folder: '05_Contracts', icon: '📋' }, { folder: '06_Legal_Agreements', icon: '🤝' },
+  { folder: '07_Corporate_Documents', icon: '🏢' }, { folder: '08_Correspondence', icon: '✉️' },
+  { folder: '09_Court_Filings', icon: '⚖️' }, { folder: '10_Employment_Records', icon: '👤' },
+  { folder: '11_Real_Estate_Documents', icon: '🏠' }, { folder: '12_Insurance_Documents', icon: '🛡️' },
+  { folder: '13_Intellectual_Property', icon: '💡' }, { folder: '14_Regulatory_And_Compliance', icon: '📜' },
+  { folder: '15_Loan_And_Credit', icon: '💳' }, { folder: '16_Client_And_Customer_Records', icon: '👥' },
+  { folder: '17_Payment_Records', icon: '💸' }, { folder: '18_Digital_And_Electronic_Evidence', icon: '💻' },
+  { folder: '19_Expert_Reports_And_Appraisals', icon: '🔬' }, { folder: '20_Miscellaneous_Uncategorized', icon: '📁' },
 ];
 
 function ConfidenceBadge({ confidence }) {
@@ -984,8 +1000,8 @@ function CategoriseTool({ onBack }) {
   const [expandedRow, setExpandedRow] = useState(null);
 
   const handleFolderSelect = (e) => {
-    const selectedFiles = Array.from(e.target.files).filter(f => !f.name.startsWith('.') && f.size > 0);
-    setFiles(selectedFiles); setResult(null); setExpandedRow(null);
+    setFiles(Array.from(e.target.files).filter(f => !f.name.startsWith('.') && f.size > 0));
+    setResult(null); setExpandedRow(null);
   };
 
   const handleSubmit = async () => {
@@ -1076,10 +1092,19 @@ function CategoriseTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Categorised Folders (ZIP)
           </button>
-          {/* QC BADGE — Categorisation */}
+          {/* QC — FIX: confidence mapped HIGH/MED/LOW → float */}
           <QCBadge
             toolName="categorisation"
-            toolOutput={{ files: result.categorizationResults || [] }}
+            toolOutput={{
+              files: (result.categorizationResults || []).map(r => ({
+                file: r.original_filename,
+                folder: r.assigned_folder,
+                // Map string confidence to float so rule checks work correctly
+                confidence: r.confidence === 'HIGH' ? 0.9 : r.confidence === 'MEDIUM' ? 0.5 : 0.2,
+                notes: r.notes,
+              })),
+              semanticMismatches: [],
+            }}
             metadata={{}}
           />
         </div>
@@ -1090,6 +1115,7 @@ function CategoriseTool({ onBack }) {
 
 // ==========================================
 // BATES STAMPING TOOL
+// FIX: batesNumber added to each file, totalInputPages passed
 // ==========================================
 function StampingTool({ onBack }) {
   const [files, setFiles] = useState([]);
@@ -1108,8 +1134,8 @@ function StampingTool({ onBack }) {
   const [error, setError] = useState('');
 
   const handleFolderSelect = (e) => {
-    const selectedFiles = Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    setFiles(selectedFiles); setResult(null); setError('');
+    setFiles(Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.pdf')));
+    setResult(null); setError('');
   };
 
   const handleSubmit = async () => {
@@ -1117,14 +1143,11 @@ function StampingTool({ onBack }) {
     setProcessing(true); setResult(null); setError('');
     const formData = new FormData();
     for (let f of files) formData.append('pdfs', f);
-    formData.append('prefix', prefix);
-    formData.append('startNumber', startNumber);
-    formData.append('padLength', padLength);
-    formData.append('password', password);
+    formData.append('prefix', prefix); formData.append('startNumber', startNumber);
+    formData.append('padLength', padLength); formData.append('password', password);
     formData.append('cornerPct', (cornerPct / 100).toString());
     formData.append('fontSize', fontSize.toString());
-    formData.append('stampColor', stampColor);
-    formData.append('stampFont', stampFont);
+    formData.append('stampColor', stampColor); formData.append('stampFont', stampFont);
     try {
       const res = await fetch('/api/process-pdf', { method: 'POST', body: formData });
       const data = await res.json();
@@ -1149,6 +1172,16 @@ function StampingTool({ onBack }) {
     </button>
   );
 
+  // Build bates numbers for QC — same logic as the API route
+  const buildBatesFiles = () => {
+    if (!result?.processedFiles) return [];
+    return result.processedFiles.map((f, i) => ({
+      name: f.name || f,
+      batesNumber: `${prefix}${String(Number(startNumber) + i).padStart(Number(padLength), '0')}`,
+      pages: f.pageCount || f.pages || 0,
+    }));
+  };
+
   return (
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
@@ -1164,11 +1197,8 @@ function StampingTool({ onBack }) {
         </label>
       </div>
       <div style={{ marginBottom: '20px', position: 'relative' }}>
-        <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
-          placeholder="PDF Password (optional)"
-          style={{ ...inputStyle, paddingRight: '44px' }} />
-        <button onClick={() => setShowPassword(!showPassword)}
-          style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>
+        <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="PDF Password (optional)" style={{ ...inputStyle, paddingRight: '44px' }} />
+        <button onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>
           {showPassword ? '🙈' : '👁️'}
         </button>
       </div>
@@ -1185,8 +1215,7 @@ function StampingTool({ onBack }) {
           {prefix}{String(startNumber).padStart(Number(padLength), '0')}
         </span>
       </div>
-      <button onClick={() => setShowAdvanced(!showAdvanced)}
-        style={{ background: 'none', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 16px', color: '#555', fontSize: '12px', cursor: 'pointer', marginBottom: '16px', width: '100%', textAlign: 'left' }}>
+      <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 16px', color: '#555', fontSize: '12px', cursor: 'pointer', marginBottom: '16px', width: '100%', textAlign: 'left' }}>
         {showAdvanced ? '▲' : '▼'} Advanced Settings
       </button>
       {showAdvanced && (
@@ -1235,13 +1264,15 @@ function StampingTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Stamped PDFs (ZIP)
           </button>
-          {/* QC BADGE — Bates Stamp */}
+          {/* QC — FIX: batesNumber built from prefix + index, totalInputPages from files */}
           <QCBadge
             toolName="bates-stamp"
             toolOutput={{
-              files: result.processedFiles || [],
+              files: buildBatesFiles(),
               stampedCount: result.processedCount || 0,
               totalFiles: files.length,
+              totalInputPages: result.totalInputPages || 0,
+              totalStampedPages: result.totalStampedPages || 0,
             }}
             metadata={{}}
           />
@@ -1252,7 +1283,7 @@ function StampingTool({ onBack }) {
 }
 
 // ==========================================
-// EXTRACTION TOOL
+// EXTRACTION TOOL (router)
 // ==========================================
 function ExtractionTool({ onBack }) {
   const [activeType, setActiveType] = useState(null);
@@ -1294,6 +1325,7 @@ function ExtractionTool({ onBack }) {
 
 // ==========================================
 // INVOICE EXTRACTION TOOL
+// FIX: toolName = "extraction-invoice", passes invoices[] from result
 // ==========================================
 function InvoiceExtractTool({ onBack }) {
   const [files, setFiles] = useState([]);
@@ -1366,8 +1398,19 @@ function InvoiceExtractTool({ onBack }) {
             style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Excel Report
           </button>
-          {/* QC BADGE — Invoice Extraction */}
-          <QCBadge toolName="extraction" toolOutput={result} metadata={{ pageCount: result?.pageCount }} />
+          {/* QC — toolName: extraction-invoice, passes invoices[] from result */}
+          <QCBadge
+            toolName="extraction-invoice"
+            toolOutput={{
+              invoices: result.invoices || [],
+              summary: {
+                totalFiles: result.totalFiles,
+                successCount: result.successCount,
+                errorCount: result.errorCount,
+              },
+            }}
+            metadata={{ pageCount: result.pageCount }}
+          />
         </div>
       )}
       {result && !result.success && (
@@ -1381,6 +1424,7 @@ function InvoiceExtractTool({ onBack }) {
 
 // ==========================================
 // BANK STATEMENT EXTRACTION TOOL
+// FIX: toolName = "extraction-bank", passes qcData from API response
 // ==========================================
 function BankExtractTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
@@ -1516,8 +1560,28 @@ function BankExtractTool({ onBack }) {
             style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Excel File
           </button>
-          {/* QC BADGE — Bank Statement Extraction */}
-          <QCBadge toolName="extraction" toolOutput={result} metadata={{ pageCount: result?.pageCount }} />
+          {/* QC — toolName: extraction-bank, uses qcData from API response */}
+          {/* Your /api/extract-bank route must return qcData: { statements[], transactions[], dateGaps[], amountOutliers[] } */}
+          <QCBadge
+            toolName="extraction-bank"
+            toolOutput={result.qcData || {
+              // Fallback if API hasn't been updated yet: build minimal qcData from summaries
+              statements: (result.summaries || []).map(s => ({
+                file: s.file,
+                openingBalance: s.opening_balance || null,
+                closingBalance: s.closing_balance || null,
+                totalDebits: s.total_debits || null,
+                totalCredits: s.total_credits || null,
+                transactionCount: s.transaction_count || 0,
+                periodStart: null,
+                periodEnd: null,
+              })),
+              transactions: [],
+              dateGaps: [],
+              amountOutliers: [],
+            }}
+            metadata={{ pageCount: result.pageCount }}
+          />
         </div>
       )}
     </div>
@@ -1525,7 +1589,7 @@ function BankExtractTool({ onBack }) {
 }
 
 // ==========================================
-// TAX STATEMENT EXTRACTION TOOL
+// TAX STATEMENT EXTRACTION TOOL — placeholder
 // ==========================================
 function TaxExtractTool({ onBack }) {
   return (

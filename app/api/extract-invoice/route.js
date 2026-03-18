@@ -6,6 +6,28 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+// ── QC DATA BUILDER ──────────────────────────────────────────────────────────
+function buildInvoiceQcData(extractedInvoices, totalFiles, successCount, errorCount) {
+  return {
+    invoices: (extractedInvoices || []).map((inv) => ({
+      file:          inv.fileName        || null,
+      invoiceNumber: inv['Invoice Number'] || inv.invoiceNumber || null,
+      invoiceDate:   inv['Invoice Date']   || inv.invoiceDate   || null,
+      vendorName:    inv['Vendor Name']    || inv.vendorName    || null,
+      customerName:  inv['Customer Name']  || inv.customerName  || null,
+      // Parse numeric amounts — Claude returns them as strings
+      subtotal: parseFloat(String(inv['Subtotal'] || inv.subtotal || '').replace(/[$,]/g, '')) || null,
+      tax:      parseFloat(String(inv['Tax']      || inv.tax      || '').replace(/[$,]/g, '')) || null,
+      total:    parseFloat(String(inv['Total Amount'] || inv['Amount'] || inv.total || '').replace(/[$,]/g, '')) || null,
+    })),
+    summary: {
+      totalFiles,
+      successCount,
+      errorCount,
+    },
+  };
+}
+
 export async function POST(request) {
   try {
     const formData = await request.formData();
@@ -16,11 +38,11 @@ export async function POST(request) {
     if (pdfFiles.length === 0) return Response.json({ error: 'No PDF files found!' }, { status: 400 });
     if (!fieldsRaw.trim()) return Response.json({ error: 'Please specify fields to extract!' }, { status: 400 });
 
-    // Parse fields from comma separated string
     const fields = fieldsRaw.split(',').map(f => f.trim()).filter(Boolean);
 
-    const results = [];
-    const errors = [];
+    const results      = [];
+    const errors       = [];
+    const invoicesForQC = []; // track for qcData
 
     for (const file of pdfFiles) {
       try {
@@ -63,15 +85,12 @@ Example format:
           const cleaned = raw.replace(/```json|```/g, '').trim();
           extracted = JSON.parse(cleaned);
         } catch {
-          // If JSON parse fails, mark all fields as extraction failed
           fields.forEach(f => extracted[f] = 'Extraction failed');
         }
 
-        results.push({
-          fileName: file.name,
-          ...extracted,
-          status: 'Success'
-        });
+        results.push({ fileName: file.name, ...extracted, status: 'Success' });
+        // Store for qcData
+        invoicesForQC.push({ fileName: file.name, ...extracted });
 
       } catch (err) {
         errors.push(file.name);
@@ -81,43 +100,34 @@ Example format:
       }
     }
 
-    // Build Excel file
+    const successCount = results.filter(r => r.status === 'Success').length;
+    const errorCount   = errors.length;
+
+    // ── Build Excel ──
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Extracted Data');
 
-    // Header row
     const headers = ['File Name', ...fields, 'Status'];
     sheet.addRow(headers);
 
-    // Style header
     const headerRow = sheet.getRow(1);
     headerRow.eachCell(cell => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, name: 'Arial', size: 11 };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3C6E' } };
+      cell.font      = { bold: true, color: { argb: 'FFFFFFFF' }, name: 'Arial', size: 11 };
+      cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1A3C6E' } };
       cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      cell.border = {
-        top: { style: 'thin' }, left: { style: 'thin' },
-        bottom: { style: 'thin' }, right: { style: 'thin' }
-      };
+      cell.border    = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
     });
     headerRow.height = 25;
 
-    // Data rows
     results.forEach((result, idx) => {
       const rowData = [result.fileName, ...fields.map(f => result[f] ?? ''), result.status];
       const row = sheet.addRow(rowData);
       const bgColor = idx % 2 === 0 ? 'FFFFFFFF' : 'FFF0F4FF';
       row.eachCell(cell => {
-        cell.font = { name: 'Arial', size: 10 };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
+        cell.font      = { name: 'Arial', size: 10 };
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor } };
         cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-        cell.border = {
-          top: { style: 'thin', color: { argb: 'FFEEEEEE' } },
-          left: { style: 'thin', color: { argb: 'FFEEEEEE' } },
-          bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } },
-          right: { style: 'thin', color: { argb: 'FFEEEEEE' } }
-        };
-        // Color status cell
+        cell.border    = { top: { style: 'thin', color: { argb: 'FFEEEEEE' } }, left: { style: 'thin', color: { argb: 'FFEEEEEE' } }, bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } }, right: { style: 'thin', color: { argb: 'FFEEEEEE' } } };
         if (cell.value === 'Failed' || cell.value === 'Error') {
           cell.font = { name: 'Arial', size: 10, color: { argb: 'FFC53030' }, bold: true };
         }
@@ -128,21 +138,20 @@ Example format:
       row.height = 20;
     });
 
-    // Auto column widths
-    sheet.columns.forEach((col, i) => {
-      col.width = i === 0 ? 30 : 22;
-    });
+    sheet.columns.forEach((col, i) => { col.width = i === 0 ? 30 : 22; });
 
     const buffer = await workbook.xlsx.writeBuffer();
     const excelBase64 = Buffer.from(buffer).toString('base64');
 
     return Response.json({
-      success: true,
-      totalFiles: pdfFiles.length,
-      successCount: results.filter(r => r.status === 'Success').length,
-      errorCount: errors.length,
+      success:      true,
+      totalFiles:   pdfFiles.length,
+      successCount,
+      errorCount,
       fields,
-      excelFile: excelBase64,
+      excelFile:    excelBase64,
+      // ── QC DATA ──
+      qcData: buildInvoiceQcData(invoicesForQC, pdfFiles.length, successCount, errorCount),
     });
 
   } catch (err) {

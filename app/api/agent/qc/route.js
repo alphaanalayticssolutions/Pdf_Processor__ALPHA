@@ -9,413 +9,802 @@ export const dynamic = "force-dynamic";
 const client = new Anthropic();
 
 // ─────────────────────────────────────────────────────────────
-// LAYER 1: Rule-Based Checks
-// Fast, free, deterministic. No AI cost.
+// SEVERITY LEVELS
+// Every issue/warning is tagged with a severity.
+// Critical = balance fraud, sequence gaps, column swaps
+// Major    = math errors, missing critical fields, bad splits
+// Minor    = cosmetic / low-impact warnings
+// ─────────────────────────────────────────────────────────────
+const SEV = {
+  CRITICAL: { label: "Critical", deduct: 25 },
+  MAJOR:    { label: "Major",    deduct: 10 },
+  MINOR:    { label: "Minor",    deduct: 3  },
+};
+
+function issue(msg, sev = SEV.MAJOR)    { return { msg, sev, type: "issue" }; }
+function warning(msg, sev = SEV.MINOR)  { return { msg, sev, type: "warning" }; }
+
+// ─────────────────────────────────────────────────────────────
+// PER-TOOL CONFIG
+// weights: how much rules vs AI contribute to final score
+// cap:     max total deduction from rules (prevents 1 bad rule nuking everything)
+// passAt:  minimum score for PASS status
+// ─────────────────────────────────────────────────────────────
+const TOOL_CONFIG = {
+  "extraction-bank":      { ruleWeight: 0.70, aiWeight: 0.30, cap: 40, passAt: 88 },
+  "extraction-invoice":   { ruleWeight: 0.70, aiWeight: 0.30, cap: 40, passAt: 88 },
+  "transaction-analysis": { ruleWeight: 0.65, aiWeight: 0.35, cap: 40, passAt: 88 },
+  "tracker":              { ruleWeight: 0.65, aiWeight: 0.35, cap: 35, passAt: 88 },
+  "categorisation":       { ruleWeight: 0.40, aiWeight: 0.60, cap: 35, passAt: 88 },
+  "bates-stamp":          { ruleWeight: 0.75, aiWeight: 0.25, cap: 45, passAt: 92 },
+  "splitter":             { ruleWeight: 0.65, aiWeight: 0.35, cap: 35, passAt: 88 },
+  "desc-categoriser":     { ruleWeight: 0.40, aiWeight: 0.60, cap: 30, passAt: 88 },
+};
+
+// ─────────────────────────────────────────────────────────────
+// DOMAIN EXPERT PROMPTS
+// ─────────────────────────────────────────────────────────────
+const DOMAIN_PROMPTS = {
+  "extraction-bank": `
+You are a forensic accountant with 20 years supporting financial fraud litigation.
+
+WHAT YOU KNOW:
+
+OCR errors easy to miss:
+- "7" misread as "1": $7,500 → $1,500 — balance math may still pass if running balance also wrong
+- Comma misread as decimal: $1,234 → $1.234
+- Running balance printed as a transaction — shows as massive credit
+- Two transactions on same line merged — amount doubled, description garbled
+- Dollar sign absorbed into description — amount shows as 0
+- Date OCR: "01/06" could be Jan 6 or Jun 1 depending on bank format
+
+Fraud patterns (flag for attorney review, not accusation):
+- Round-dollar transfers just below $10K reporting thresholds (structuring)
+- Daily ATM withdrawals at maximum limit for consecutive days
+- Large deposits followed immediately by large transfers out (pass-through)
+- Same vendor paid multiple times in a short window
+- Zero debits on a business account — possible column swap or unusual account type
+
+Statement integrity for legal use:
+- Closing balance of Jan MUST equal opening balance of Feb
+- Transaction count < 5 per page on dense business account = missing pages
+- Gaps > 10 days in active business account = likely missing pages, not real inactivity
+`,
+
+  "extraction-invoice": `
+You are an AP fraud auditor who has investigated invoice fraud at 50+ companies.
+
+WHAT YOU KNOW:
+
+Invoice fraud patterns:
+- Sequential invoice numbers from same vendor within days (duplicate billing)
+- Amounts just below approval thresholds ($4,999 when limit is $5,000)
+- Invoice date on a weekend or holiday for a B2B vendor
+- Due date before invoice date — impossible
+- Invoice dated in the future — OCR error or pre-dated document
+- Tax amount not matching any standard rate
+
+OCR extraction errors:
+- "Invoice #" prefix in invoice number field
+- Vendor address extracted as vendor name
+- PO number confused with invoice number
+- Total extracted from subtotal line (misses tax)
+
+Vendor normalization:
+- "IBM Inc." and "IBM LLC" are likely the same entity — flag if same vendor appears with variants
+`,
+
+  "transaction-analysis": `
+You are a financial forensics analyst building pivot analyses for litigation.
+
+WHAT MATTERS:
+
+Coverage gaps attorneys will challenge:
+- Account A sends $50K to Account B but Account B not in analysis — transfer vanishes
+- Zero-transaction months in active period = missing statements
+- Date range shorter than case period = discovery gap
+
+Suspicious patterns:
+- One account with 10x volume of others
+- Activity stopping on exact same date across accounts
+- Round-number transactions dominating ($5K, $10K consistently)
+- Dormant account (0 activity for 3+ months) suddenly spiking
+
+Data integrity:
+- Overlapping date ranges for same account = double-counted transactions
+- Account names differing by one character = phantom duplicates
+`,
+
+  "tracker": `
+You are a legal discovery compliance specialist. Gaps in your tracker are gaps in the production.
+
+WHAT YOU KNOW:
+
+Gap patterns:
+- Single missing month = one PDF not uploaded
+- 3+ consecutive missing = full quarter missing
+- All accounts missing same month = that folder never processed
+
+Account naming problems:
+- "Chase 2281" and "Chase Business 2281" = same account
+- "AmEx" vs "American Express" vs "AMEX" = 3 phantom accounts
+- Leading zeros: "0003000" vs "3000"
+`,
+
+  "categorisation": `
+You are a senior paralegal who has organized 500+ legal document productions.
+
+HARD RULES — always flag regardless of AI confidence:
+- Bank statements in Court Filings folder = wrong
+- Contracts in Bank Statements folder = wrong
+- Attorney letters in any non-Correspondence folder = privilege risk
+
+SOFT OBSERVATIONS:
+- If Miscellaneous is the largest folder, categorization failed
+- ALL HIGH confidence on 100+ files = AI rubber-stamping, not reasoning
+- Tax documents in Correspondence = forensic accountants won't find them
+`,
+
+  "bates-stamp": `
+You are a litigation support director. Bates errors are the most legally consequential mistakes in production.
+
+NON-NEGOTIABLE:
+- Any gap in sequence = document may have been withheld — opposing counsel WILL notice
+- Gap of 1 is MORE suspicious than gap of 100 — looks intentional
+- Duplicate numbers = two documents share one identifier — corrupts entire production
+- Prefix changing mid-batch = inconsistent production
+
+PAGE COUNT:
+- 50-page PDF getting 48 Bates numbers = 2 pages unnumbered = production defect
+- Zero-page PDFs stamped = corrupt file in production
+`,
+
+  "splitter": `
+You are a document processing specialist. Bad splits cascade into extraction errors and Bates gaps.
+
+WHAT TO LOOK FOR:
+- "Document_1", "Part_2" names = AI could not identify statement period
+- One split with 80% of pages = split point was missed
+- 1-2 page splits = likely cover page separated from statement
+- All splits same page count = AI split on page count not content
+- Total pages across splits ≠ total input pages = pages lost or duplicated
+`,
+
+  "desc-categoriser": `
+You are a forensic accountant categorizing business transactions for litigation analysis.
+
+HIGH-STAKES ERRORS:
+- WIRE TRANSFER → Utilities = hides fund movements
+- ADP/PAYCHEX/GUSTO/RIPPLING → not Payroll = understates labor costs
+- LOAN PAYMENT → Transfer = hides debt obligations
+- INTERCOMPANY TRANSFER must be its own category
+
+COMMON AI MISTAKES:
+- APPLE.COM/BILL → Food (wrong — it's Software/Subscriptions)
+- AMAZON WEB SERVICES → Shopping (wrong — it's Cloud/Software)
+- PAYPAL *VENDOR NAME → Transfer (wrong — vendor name is right there)
+- SQ * = Square payments → Sales Revenue if incoming, Vendor Payment if outgoing
+`,
+};
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+function isValidDate(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr);
+  return !isNaN(d.getTime());
+}
+
+function isFutureDate(dateStr) {
+  if (!dateStr) return false;
+  return new Date(dateStr) > new Date();
+}
+
+// ─────────────────────────────────────────────────────────────
+// LAYER 1: Rule Checks
+// Returns array of { msg, sev, type } objects
 // ─────────────────────────────────────────────────────────────
 function runRuleChecks(toolName, toolOutput) {
-  const issues = [];
-  const warnings = [];
+  const findings = [];
 
-  // ── 1. EXTRACTION ──
-  if (toolName === "extraction") {
-    const transactions = toolOutput.transactions || [];
-    const summary = toolOutput.summary || {};
-    const metadata = toolOutput.metadata || {};
+  // ── BANK EXTRACTION ──────────────────────────────────────────
+  if (toolName === "extraction-bank") {
+    const statements = toolOutput.statements || [];
+    const allTransactions = toolOutput.transactions || [];
 
-    // Balance math check
-    const { openingBalance, closingBalance, totalCredits, totalDebits } = summary;
-    if (
-      openingBalance !== undefined &&
-      closingBalance !== undefined &&
-      totalCredits !== undefined &&
-      totalDebits !== undefined
-    ) {
-      const expected = openingBalance + totalCredits - totalDebits;
-      const diff = Math.abs(expected - closingBalance);
+    if (statements.length === 0 && allTransactions.length === 0) {
+      findings.push(issue("No data returned — extraction may have failed silently", SEV.CRITICAL));
+      return findings;
+    }
+
+    // Per-statement balance math
+    statements.forEach((stmt) => {
+      const { file, openingBalance, closingBalance, totalDebits, totalCredits } = stmt;
+      if (openingBalance == null || closingBalance == null) {
+        findings.push(warning(`${file}: opening or closing balance missing — cannot verify math`, SEV.MAJOR));
+        return;
+      }
+      const expected = +(openingBalance + totalCredits - totalDebits).toFixed(2);
+      const actual = +closingBalance.toFixed(2);
+      const diff = Math.abs(expected - actual);
       if (diff > 1) {
-        issues.push(`Balance mismatch: expected $${expected.toFixed(2)}, got $${closingBalance.toFixed(2)} (difference: $${diff.toFixed(2)})`);
+        findings.push(issue(
+          `${file}: balance mismatch — expected $${expected.toFixed(2)}, got $${actual.toFixed(2)} (off by $${diff.toFixed(2)})`,
+          SEV.CRITICAL
+        ));
+      } else if (diff > 0.01) {
+        findings.push(warning(`${file}: rounding difference of $${diff.toFixed(2)} — verify cents`, SEV.MINOR));
+      }
+    });
+
+    // Cross-statement continuity
+    const sorted = [...statements].sort((a, b) => new Date(a.periodStart) - new Date(b.periodStart));
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (prev.closingBalance != null && curr.openingBalance != null) {
+        const gap = Math.abs(prev.closingBalance - curr.openingBalance);
+        if (gap > 1) {
+          findings.push(issue(
+            `Balance gap: ${prev.file} closes $${prev.closingBalance.toFixed(2)} but ${curr.file} opens $${curr.openingBalance.toFixed(2)} — $${gap.toFixed(2)} unaccounted`,
+            SEV.CRITICAL
+          ));
+        }
       }
     }
 
-    // Missing descriptions
-    const missingDesc = transactions.filter((t) => !t.description || t.description.trim() === "");
-    if (missingDesc.length > 0) {
-      warnings.push(`${missingDesc.length} transaction(s) have missing descriptions`);
+    // Running balance errors (pre-computed by API route)
+    (toolOutput.runningBalanceErrors || []).forEach((e) => {
+      findings.push(issue(`${e.file} row ${e.row}: running balance error — expected $${e.expected}, found $${e.found}`, SEV.MAJOR));
+    });
+
+    // Column swap detection — keep as issue but note to verify account type
+    const swapSuspects = statements.filter(
+      (s) => s.totalCredits > 0 && s.totalDebits === 0 && s.transactionCount > 5
+    );
+    if (swapSuspects.length > 0) {
+      findings.push(issue(
+        `${swapSuspects.map((s) => s.file).join(", ")}: credits present but zero debits — possible column swap (verify account type)`,
+        SEV.MAJOR
+      ));
     }
 
-    // Zero amount transactions
-    const zeroTx = transactions.filter(
-      (t) =>
-        (t.debit === 0 || t.debit === null || t.debit === undefined) &&
-        (t.credit === 0 || t.credit === null || t.credit === undefined)
-    );
-    if (zeroTx.length > 0) {
-      issues.push(`${zeroTx.length} transaction(s) have zero amounts for both debit and credit`);
+    // Date gaps
+    (toolOutput.dateGaps || []).forEach((g) => {
+      findings.push(warning(`${g.file}: ${g.dayGap}-day gap (${g.from} → ${g.to}) — verify no missing pages`, SEV.MINOR));
+    });
+
+    // Invalid / OCR-mangled dates
+    const invalidDates = allTransactions.filter((t) => t.date && !isValidDate(t.date));
+    if (invalidDates.length > 0) {
+      findings.push(issue(`${invalidDates.length} transaction(s) have invalid dates — OCR may have mangled the date field`, SEV.MAJOR));
     }
+
+    // Amount outliers
+    (toolOutput.amountOutliers || []).forEach((o) => {
+      findings.push(warning(`${o.file}: $${o.amount} on ${o.date} is ${o.times}× the median — possible OCR error`, SEV.MINOR));
+    });
+
+    // Missing descriptions
+    const missingDesc = allTransactions.filter((t) => !t.description?.trim()).length;
+    if (missingDesc > 0) findings.push(warning(`${missingDesc} transaction(s) have no description`, SEV.MINOR));
 
     // Duplicate transactions
     const seen = new Map();
-    let duplicateCount = 0;
-    transactions.forEach((t) => {
-      const key = `${t.date}-${t.debit}-${t.credit}-${t.description}`;
-      if (seen.has(key)) duplicateCount++;
+    let dupes = 0;
+    allTransactions.forEach((t) => {
+      const key = `${t.date}-${t.debit}-${t.credit}-${t.description?.trim()}`;
+      if (seen.has(key)) dupes++;
       else seen.set(key, true);
     });
-    if (duplicateCount > 0) {
-      warnings.push(`${duplicateCount} possible duplicate transaction(s) detected (same date, amount, description)`);
+    if (dupes > 0) findings.push(warning(`${dupes} possible duplicate transaction(s) — same date, amount, description`, SEV.MINOR));
+  }
+
+  // ── INVOICE EXTRACTION ───────────────────────────────────────
+  if (toolName === "extraction-invoice") {
+    const invoices = toolOutput.invoices || [];
+    const summary = toolOutput.summary || {};
+
+    if (invoices.length === 0) {
+      findings.push(issue("No invoices extracted — check if PDFs are valid invoice documents", SEV.CRITICAL));
+      return findings;
     }
 
-    // Page coverage
-    const pageCount = metadata.pageCount;
-    if (pageCount && transactions.length < pageCount * 5) {
-      warnings.push(`Low transaction count: ${transactions.length} transactions for ${pageCount} pages — possible extraction gap`);
-    }
-
-    // Suspiciously round amounts (possible placeholder values)
-    const roundAmounts = transactions.filter((t) => {
-      const amt = t.debit || t.credit || 0;
-      return amt > 0 && amt % 1000 === 0 && amt > 10000;
+    // Tax math check
+    let taxErrors = 0;
+    invoices.forEach((inv) => {
+      if (inv.subtotal != null && inv.tax != null && inv.total != null) {
+        const expected = +(inv.subtotal + inv.tax).toFixed(2);
+        if (Math.abs(expected - inv.total) > 0.05) taxErrors++;
+      }
     });
-    if (roundAmounts.length > 3) {
-      warnings.push(`${roundAmounts.length} transactions have suspiciously round amounts (multiples of $1000) — verify these are real`);
+    if (taxErrors > 0) findings.push(issue(`${taxErrors} invoice(s): subtotal + tax ≠ total — extraction or OCR error`, SEV.MAJOR));
+
+    // Duplicate invoice numbers
+    const invoiceNums = invoices.map((i) => i.invoiceNumber).filter(Boolean);
+    const uniqueNums = new Set(invoiceNums);
+    if (uniqueNums.size < invoiceNums.length) {
+      findings.push(issue(`${invoiceNums.length - uniqueNums.size} duplicate invoice number(s) — same invoice extracted twice?`, SEV.MAJOR));
     }
+
+    // Future-dated invoices
+    const futureDated = invoices.filter((inv) => inv.invoiceDate && isFutureDate(inv.invoiceDate));
+    if (futureDated.length > 0) {
+      findings.push(issue(`${futureDated.length} invoice(s) are future-dated — OCR error or pre-dated document`, SEV.MAJOR));
+    }
+
+    // Invalid dates
+    const invalidDates = invoices.filter((inv) => inv.invoiceDate && !isValidDate(inv.invoiceDate));
+    if (invalidDates.length > 0) {
+      findings.push(issue(`${invalidDates.length} invoice(s) have invalid dates — OCR may have mangled the date field`, SEV.MAJOR));
+    }
+
+    // Amount outliers
+    const amounts = invoices.map((i) => i.total).filter((a) => a > 0).sort((a, b) => a - b);
+    if (amounts.length > 3) {
+      const median = amounts[Math.floor(amounts.length / 2)];
+      const outliers = amounts.filter((a) => a > median * 50 || a < median / 50);
+      if (outliers.length > 0) {
+        findings.push(warning(`${outliers.length} invoice amount(s) are extreme outliers vs median $${median.toFixed(2)} — verify OCR`, SEV.MINOR));
+      }
+    }
+
+    // Missing fields
+    const missingTotal = invoices.filter((i) => i.total == null).length;
+    const missingVendor = invoices.filter((i) => !i.vendorName?.trim()).length;
+    const missingDate = invoices.filter((i) => !i.invoiceDate?.trim()).length;
+    if (missingTotal > 0) findings.push(issue(`${missingTotal} invoice(s) missing total amount`, SEV.MAJOR));
+    if (missingVendor > 0) findings.push(warning(`${missingVendor} invoice(s) missing vendor name`, SEV.MINOR));
+    if (missingDate > 0) findings.push(warning(`${missingDate} invoice(s) missing invoice date`, SEV.MINOR));
+
+    // Failure rate
+    const failRate = ((summary.errorCount || 0) / (summary.totalFiles || 1)) * 100;
+    if (failRate > 20) findings.push(issue(`${failRate.toFixed(0)}% of invoices failed extraction — check PDF quality`, SEV.MAJOR));
+    else if (failRate > 5) findings.push(warning(`${failRate.toFixed(0)}% of invoices failed extraction`, SEV.MINOR));
   }
 
-  // ── 2. PDF SPLITTER ──
-  if (toolName === "splitter") {
-    const splits = toolOutput.splits || [];
-    const totalPages = toolOutput.totalPages || 0;
-
-    if (splits.length === 0) {
-      issues.push("No split points detected. PDF may not have been processed correctly.");
-    }
-
-    const unnamedSplits = splits.filter((s) => !s.name || s.name.trim() === "");
-    if (unnamedSplits.length > 0) {
-      warnings.push(`${unnamedSplits.length} split(s) have no name assigned`);
-    }
-
-    const emptySplits = splits.filter((s) => (s.pageCount || s.pages || 0) === 0);
-    if (emptySplits.length > 0) {
-      issues.push(`${emptySplits.length} split(s) have zero pages — possible split error`);
-    }
-
-    const splitPageTotal = splits.reduce((sum, s) => sum + (s.pageCount || s.pages || 0), 0);
-    if (totalPages > 0 && Math.abs(splitPageTotal - totalPages) > 2) {
-      warnings.push(`Page count mismatch: splits account for ${splitPageTotal} pages but PDF has ${totalPages} pages`);
-    }
-  }
-
-  // ── 3. CATEGORISATION ──
-  if (toolName === "categorisation") {
-    const files = toolOutput.files || [];
-
-    if (files.length === 0) {
-      issues.push("No files found in categorisation output.");
-    } else {
-      // Low confidence check
-      const lowConfidence = files.filter(
-        (f) => f.confidence !== undefined && f.confidence < 0.5
-      );
-      const lowPercent = (lowConfidence.length / files.length) * 100;
-      if (lowPercent > 20) {
-        warnings.push(`${lowPercent.toFixed(0)}% of files have low confidence scores (threshold: 20%)`);
-      }
-
-      // Miscellaneous overflow
-      const miscFiles = files.filter(
-        (f) => f.folder && f.folder.toLowerCase().includes("miscellaneous")
-      );
-      const miscPercent = (miscFiles.length / files.length) * 100;
-      if (miscPercent > 10) {
-        warnings.push(`${miscPercent.toFixed(0)}% of files placed in Miscellaneous folder (threshold: 10%)`);
-      }
-
-      // No folder assigned
-      const noFolder = files.filter((f) => !f.folder || f.folder.trim() === "");
-      if (noFolder.length > 0) {
-        issues.push(`${noFolder.length} file(s) have no folder assigned`);
-      }
-
-      // Check confidence field format — HIGH/MEDIUM/LOW vs numeric
-      const lowConfidenceStr = files.filter(
-        (f) => f.confidence === "LOW"
-      );
-      const lowStrPercent = (lowConfidenceStr.length / files.length) * 100;
-      if (lowStrPercent > 20) {
-        warnings.push(`${lowStrPercent.toFixed(0)}% of files marked LOW confidence by AI categoriser`);
-      }
-    }
-  }
-
-  // ── 4. BATES STAMP ──
-  if (toolName === "bates-stamp") {
-    const files = toolOutput.files || [];
-    const stamped = toolOutput.stampedCount || 0;
-    const total = toolOutput.totalFiles || files.length;
-
-    if (total > 0 && stamped < total) {
-      const unstamped = total - stamped;
-      warnings.push(`${unstamped} file(s) out of ${total} were not stamped`);
-    }
-
-    const batesNumbers = files.map((f) => f.batesNumber || f.startBates).filter(Boolean);
-    const uniqueBates = new Set(batesNumbers);
-    if (uniqueBates.size < batesNumbers.length) {
-      issues.push("Duplicate Bates numbers detected — numbering may be incorrect");
-    }
-
-    const nums = batesNumbers
-      .map((b) => parseInt(b.replace(/\D/g, ""), 10))
-      .filter((n) => !isNaN(n))
-      .sort((a, b) => a - b);
-    for (let i = 1; i < nums.length; i++) {
-      if (nums[i] - nums[i - 1] > 1) {
-        warnings.push(`Gap in Bates sequence between ${nums[i - 1]} and ${nums[i]}`);
-        break;
-      }
-    }
-  }
-
-  // ── 5. TRACKER ──
-  if (toolName === "tracker") {
-    const gaps = toolOutput.gaps || 0;
-    const totalMonths = toolOutput.totalMonths || 0;
-    const totalAccounts = toolOutput.totalAccounts || 0;
-
-    if (totalMonths === 0) {
-      issues.push("Tracker has no months of data — output may be empty");
-    } else {
-      const gapPercent = (gaps / totalMonths) * 100;
-      if (gapPercent > 30) {
-        issues.push(`High gap rate: ${gaps} missing months out of ${totalMonths} total (${gapPercent.toFixed(0)}%)`);
-      } else if (gaps > 0) {
-        warnings.push(`${gaps} gap(s) found in tracker — marked as (?) — statements missing for these periods`);
-      }
-    }
-
-    if (totalAccounts === 0) {
-      issues.push("No accounts found in tracker output");
-    }
-  }
-
-  // ── 6. DESCRIPTION CATEGORISER ──
-  if (toolName === "desc-categoriser") {
-    const descriptions = toolOutput.descriptions || [];
-    const total = descriptions.length;
-
-    if (total === 0) {
-      issues.push("No descriptions found in output");
-    } else {
-      const uncategorised = descriptions.filter(
-        (d) =>
-          !d.category ||
-          d.category.trim() === "" ||
-          d.category.toLowerCase() === "uncategorised" ||
-          d.category.toLowerCase() === "uncategorized" ||
-          d.category.toLowerCase() === "other"
-      );
-      const uncatPercent = (uncategorised.length / total) * 100;
-      if (uncatPercent > 15) {
-        warnings.push(`${uncatPercent.toFixed(0)}% of descriptions are uncategorised (threshold: 15%)`);
-      }
-
-      const lowConf = descriptions.filter(
-        (d) => d.confidence !== undefined && d.confidence < 0.4
-      );
-      if (lowConf.length > 0) {
-        warnings.push(`${lowConf.length} description(s) have very low categorisation confidence`);
-      }
-    }
-  }
-
-  // ── 7. TRANSACTION ANALYSIS ──
+  // ── TRANSACTION ANALYSIS ─────────────────────────────────────
   if (toolName === "transaction-analysis") {
     const accounts = toolOutput.accounts || [];
     const flaggedTransfers = toolOutput.flaggedTransfers || [];
     const fileCount = toolOutput.fileCount || 0;
 
-    if (accounts.length === 0 && fileCount === 0) {
-      warnings.push("No structured account data returned — QC running on file metadata only");
+    if (fileCount === 0) {
+      findings.push(issue("No files were processed — check input format", SEV.CRITICAL));
+      return findings;
     }
 
     accounts.forEach((acc) => {
-      if (acc.maxMonthTx && acc.avgMonthTx && acc.avgMonthTx > 0) {
-        if (acc.maxMonthTx > acc.avgMonthTx * 10) {
-          warnings.push(`Account "${acc.name}" spike detected: ${acc.maxMonthTx} transactions in one month vs avg ${acc.avgMonthTx}`);
-        }
+      if (!acc.monthlyData?.length) return;
+
+      const counts = acc.monthlyData.map((m) => m.count).filter((c) => c > 0);
+
+      // Spike detection
+      if (counts.length > 2) {
+        const avg = counts.reduce((s, c) => s + c, 0) / counts.length;
+        acc.monthlyData.filter((m) => m.count > avg * 5).forEach((s) => {
+          findings.push(warning(`"${acc.name}": ${s.month} has ${s.count} transactions vs avg ${avg.toFixed(0)} — investigate spike`, SEV.MINOR));
+        });
       }
 
-      if (acc.monthlyData && Array.isArray(acc.monthlyData)) {
-        const nonZeroMonths = acc.monthlyData.filter((m) => m.count > 0);
-        if (nonZeroMonths.length > 2) {
-          const firstActive = acc.monthlyData.indexOf(nonZeroMonths[0]);
-          const lastActive = acc.monthlyData.indexOf(nonZeroMonths[nonZeroMonths.length - 1]);
-          const middleMonths = acc.monthlyData.slice(firstActive, lastActive + 1);
-          const zeroMiddle = middleMonths.filter((m) => m.count === 0);
-          if (zeroMiddle.length > 0) {
-            warnings.push(`Account "${acc.name}" has ${zeroMiddle.length} month(s) with zero activity in middle of active period`);
-          }
+      // Dormant account sudden activity
+      const firstActive = acc.monthlyData.findIndex((m) => m.count > 0);
+      if (firstActive > 3) {
+        const dormantMonths = acc.monthlyData.slice(0, firstActive).length;
+        findings.push(warning(`"${acc.name}": dormant for ${dormantMonths} months then suddenly active — verify this is not a newly opened account`, SEV.MINOR));
+      }
+
+      // Zero-activity gaps in active period
+      const nonZero = acc.monthlyData.filter((m) => m.count > 0);
+      if (nonZero.length >= 2) {
+        const firstIdx = acc.monthlyData.indexOf(nonZero[0]);
+        const lastIdx = acc.monthlyData.indexOf(nonZero[nonZero.length - 1]);
+        const gaps = acc.monthlyData.slice(firstIdx, lastIdx + 1).filter((m) => m.count === 0);
+        if (gaps.length > 0) {
+          findings.push(warning(`"${acc.name}": no activity in ${gaps.map((g) => g.month).join(", ")} — missing statements?`, SEV.MINOR));
         }
       }
     });
 
     if (flaggedTransfers.length > 0) {
-      warnings.push(`${flaggedTransfers.length} suspicious interbank transfer(s) flagged for review`);
+      findings.push(warning(`${flaggedTransfers.length} interbank transfer(s) with no matching counterpart in uploaded accounts`, SEV.MINOR));
+    }
+
+    const totalTx = accounts.reduce((s, a) => s + (a.totalTransactions || 0), 0);
+    if (fileCount > 0 && totalTx < fileCount * 5) {
+      findings.push(warning(`Only ${totalTx} total transactions across ${fileCount} files — verify input files are correct`, SEV.MINOR));
     }
   }
 
-  return { issues, warnings };
+  // ── STATEMENT TRACKER ────────────────────────────────────────
+  if (toolName === "tracker") {
+    const gaps = toolOutput.gaps || 0;
+    const totalMonths = toolOutput.totalMonths || 0;
+    const totalAccounts = (toolOutput.totalBankAccounts || 0) + (toolOutput.totalCreditCards || 0);
+    const missingMonths = toolOutput.missingMonths || [];
+    const duplicateAccounts = toolOutput.duplicateAccounts || [];
+
+    if (totalAccounts === 0) {
+      findings.push(issue("No accounts found in tracker — check input Excel schema", SEV.CRITICAL));
+      return findings;
+    }
+    if (totalMonths === 0) {
+      findings.push(issue("Tracker has no months of data — output may be empty", SEV.CRITICAL));
+      return findings;
+    }
+
+    const gapRate = (gaps / totalMonths) * 100;
+    if (gapRate > 30) {
+      findings.push(issue(`High gap rate: ${gaps} missing months out of ${totalMonths} (${gapRate.toFixed(0)}%)`, SEV.MAJOR));
+    } else if (gaps > 0) {
+      const monthStr = missingMonths.length > 0
+        ? `Missing: ${missingMonths.slice(0, 6).join(", ")}${missingMonths.length > 6 ? ` +${missingMonths.length - 6} more` : ""}`
+        : `${gaps} gap(s) in tracker`;
+      findings.push(warning(monthStr, SEV.MINOR));
+    }
+
+    if (duplicateAccounts.length > 0) {
+      findings.push(warning(`Possible duplicate accounts: ${duplicateAccounts.join(", ")} — same account, different name format?`, SEV.MINOR));
+    }
+
+    if (totalMonths < 3) {
+      findings.push(warning(`Only ${totalMonths} months covered — is this the full requested date range?`, SEV.MINOR));
+    }
+  }
+
+  // ── CATEGORISATION ──────────────────────────────────────────
+  if (toolName === "categorisation") {
+    const files = toolOutput.files || [];
+    if (files.length === 0) {
+      findings.push(issue("No files categorised", SEV.CRITICAL));
+      return findings;
+    }
+
+    const normalized = files.map((f) => ({
+      ...f,
+      confidenceFloat: typeof f.confidence === "string"
+        ? f.confidence === "HIGH" ? 0.9 : f.confidence === "MEDIUM" ? 0.5 : 0.2
+        : (f.confidence ?? 0.5),
+    }));
+
+    // HARD RULE — bank statement in wrong folder
+    const bankInWrongFolder = files.filter(
+      (f) => f.file?.toLowerCase().includes("bank") &&
+             f.folder && !f.folder.toLowerCase().includes("bank")
+    );
+    if (bankInWrongFolder.length > 0) {
+      findings.push(issue(
+        `${bankInWrongFolder.length} file(s) with "bank" in name placed outside Bank Statements folder — verify classification`,
+        SEV.CRITICAL
+      ));
+    }
+
+    // Semantic mismatches from API route
+    (toolOutput.semanticMismatches || []).forEach((m) => {
+      findings.push(warning(`"${m.file}" → ${m.folder} but name suggests ${m.suggestedFolder}`, SEV.MINOR));
+    });
+
+    // Low confidence rate
+    const lowConf = normalized.filter((f) => f.confidenceFloat < 0.5);
+    const lowPct = (lowConf.length / files.length) * 100;
+    if (lowPct > 25) findings.push(issue(`${lowPct.toFixed(0)}% of files have low confidence`, SEV.MAJOR));
+    else if (lowPct > 10) findings.push(warning(`${lowPct.toFixed(0)}% of files have low confidence`, SEV.MINOR));
+
+    // All-HIGH suspicious
+    if (normalized.every((f) => f.confidenceFloat >= 0.9) && files.length > 20) {
+      findings.push(warning(`All ${files.length} files scored HIGH confidence — possible AI overconfidence, spot-check manually`, SEV.MINOR));
+    }
+
+    // Miscellaneous overflow
+    const misc = files.filter((f) => f.folder?.toLowerCase().includes("miscellaneous"));
+    const miscPct = (misc.length / files.length) * 100;
+    if (miscPct > 15) findings.push(issue(`${miscPct.toFixed(0)}% of files in Miscellaneous`, SEV.MAJOR));
+    else if (miscPct > 5) findings.push(warning(`${miscPct.toFixed(0)}% of files in Miscellaneous`, SEV.MINOR));
+
+    const noFolder = files.filter((f) => !f.folder?.trim()).length;
+    if (noFolder > 0) findings.push(issue(`${noFolder} file(s) have no folder assigned`, SEV.MAJOR));
+  }
+
+  // ── BATES STAMPING ──────────────────────────────────────────
+  if (toolName === "bates-stamp") {
+    const files = toolOutput.files || [];
+    const stampedCount = toolOutput.stampedCount || 0;
+    const totalFiles = toolOutput.totalFiles || files.length;
+    const totalInputPages = toolOutput.totalInputPages || 0;
+    const totalStampedPages = toolOutput.totalStampedPages || 0;
+
+    if (totalFiles > 0 && stampedCount < totalFiles) {
+      findings.push(issue(`${totalFiles - stampedCount} of ${totalFiles} file(s) were not stamped`, SEV.MAJOR));
+    }
+
+    // Duplicate Bates numbers
+    const batesNumbers = files.map((f) => f.batesNumber || f.startBates).filter(Boolean);
+    const unique = new Set(batesNumbers);
+    if (unique.size < batesNumbers.length) {
+      findings.push(issue("Duplicate Bates numbers detected — numbering is incorrect, do not produce", SEV.CRITICAL));
+    }
+
+    // Sequence gaps
+    const nums = batesNumbers
+      .map((b) => parseInt(b.replace(/\D/g, ""), 10))
+      .filter((n) => !isNaN(n))
+      .sort((a, b) => a - b);
+    const gapsFound = [];
+    for (let i = 1; i < nums.length; i++) {
+      if (nums[i] - nums[i - 1] > 1) gapsFound.push({ from: nums[i - 1], to: nums[i], size: nums[i] - nums[i - 1] - 1 });
+    }
+    if (gapsFound.length > 0) {
+      const worstGap = gapsFound.sort((a, b) => a.size - b.size)[0]; // smallest gap = most suspicious
+      const sev = worstGap.size === 1 ? SEV.CRITICAL : SEV.MAJOR;
+      const note = worstGap.size === 1 ? " (gap of 1 — looks intentional)" : "";
+      findings.push(issue(
+        `Bates gap(s): ${gapsFound.slice(0, 3).map((g) => `${g.from}→${g.to}`).join(", ")}${gapsFound.length > 3 ? " ..." : ""}${note}`,
+        sev
+      ));
+    }
+
+    // Prefix consistency
+    const prefixes = [...new Set(batesNumbers.map((b) => b.replace(/\d+$/, "")))];
+    if (prefixes.length > 1) {
+      findings.push(issue(`Inconsistent Bates prefix: ${prefixes.join(", ")}`, SEV.MAJOR));
+    }
+
+    // Page count match
+    if (totalInputPages > 0 && totalStampedPages > 0 && totalStampedPages !== totalInputPages) {
+      findings.push(issue(`Page count mismatch: ${totalStampedPages} stamped vs ${totalInputPages} input pages`, SEV.MAJOR));
+    }
+
+    const zeroPage = files.filter((f) => (f.pages || f.pageCount || 0) === 0).length;
+    if (zeroPage > 0) findings.push(warning(`${zeroPage} stamped file(s) have 0 pages — corrupt or empty`, SEV.MINOR));
+  }
+
+  // ── PDF SPLITTER ─────────────────────────────────────────────
+  if (toolName === "splitter") {
+    const splits = toolOutput.splits || [];
+    const totalPages = toolOutput.totalPages || 0;
+
+    if (splits.length === 0) {
+      findings.push(issue("No splits produced", SEV.CRITICAL));
+      return findings;
+    }
+
+    const splitTotal = splits.reduce((s, sp) => s + (sp.pageCount || sp.pages || 0), 0);
+    if (totalPages > 0 && Math.abs(splitTotal - totalPages) > 2) {
+      findings.push(issue(`Page count mismatch: splits account for ${splitTotal} of ${totalPages} pages`, SEV.MAJOR));
+    }
+
+    const unnamed = splits.filter((s) => !s.name?.trim()).length;
+    if (unnamed > 0) findings.push(warning(`${unnamed} split(s) have no name`, SEV.MINOR));
+
+    const generic = splits.filter((s) => /^(document|part|file|split)[_\s\d]+$/i.test(s.name?.trim() || "")).length;
+    if (generic > splits.length * 0.5) {
+      findings.push(warning(`${generic} splits have generic auto-generated names — AI naming may have failed`, SEV.MINOR));
+    }
+
+    if (splits.length > 1 && splitTotal > 0) {
+      const maxPages = Math.max(...splits.map((s) => s.pageCount || s.pages || 0));
+      const maxPct = (maxPages / splitTotal) * 100;
+      if (maxPct > 75) {
+        const big = splits.find((s) => (s.pageCount || s.pages || 0) === maxPages);
+        findings.push(warning(`"${big?.name}" has ${maxPct.toFixed(0)}% of all pages — split may be unbalanced`, SEV.MINOR));
+      }
+    }
+
+    const empty = splits.filter((s) => (s.pageCount || s.pages || 0) === 0).length;
+    if (empty > 0) findings.push(issue(`${empty} split(s) have 0 pages`, SEV.MAJOR));
+  }
+
+  // ── DESCRIPTION CATEGORISER ──────────────────────────────────
+  if (toolName === "desc-categoriser") {
+    const descriptions = toolOutput.descriptions || [];
+    const total = descriptions.length;
+
+    if (total === 0) {
+      findings.push(issue("No descriptions found in output", SEV.CRITICAL));
+      return findings;
+    }
+
+    const uncategorised = descriptions.filter((d) =>
+      !d.category?.trim() ||
+      ["uncategorised", "uncategorized", "other", "unknown"].includes(d.category.toLowerCase())
+    ).length;
+    if ((uncategorised / total) * 100 > 15) {
+      findings.push(warning(`${((uncategorised / total) * 100).toFixed(0)}% of descriptions uncategorised`, SEV.MINOR));
+    }
+
+    // Inconsistency: same description, different categories
+    const freqMap = {};
+    descriptions.forEach((d) => {
+      const key = d.description?.toLowerCase().trim();
+      if (!key) return;
+      if (!freqMap[key]) freqMap[key] = { cats: new Set(), count: 0 };
+      freqMap[key].cats.add(d.category);
+      freqMap[key].count++;
+    });
+    const inconsistent = Object.entries(freqMap).filter(([, v]) => v.count > 3 && v.cats.size > 1);
+    if (inconsistent.length > 0) {
+      findings.push(warning(`${inconsistent.length} description(s) appear multiple times with different categories`, SEV.MINOR));
+    }
+
+    (toolOutput.semanticMismatches || []).forEach((m) => {
+      findings.push(warning(`"${m.description}" → "${m.assigned}" but likely should be "${m.expected}"`, SEV.MINOR));
+    });
+
+    const lowConf = descriptions.filter((d) => d.confidence != null && d.confidence < 0.4).length;
+    if (lowConf > 0) findings.push(warning(`${lowConf} description(s) have very low confidence`, SEV.MINOR));
+  }
+
+  return findings;
 }
 
 // ─────────────────────────────────────────────────────────────
-// LAYER 2: AI Deep Analysis
-// Professional-grade forensic financial QC prompt.
+// FACTS SUMMARY — readable summary for AI, not raw JSON
 // ─────────────────────────────────────────────────────────────
-async function runAIAnalysis(toolName, toolOutput, ruleIssues, ruleWarnings) {
-  const outputSample = JSON.stringify(toolOutput).slice(0, 4000);
+function buildFactsSummary(toolName, toolOutput) {
+  try {
+    if (toolName === "extraction-bank") {
+      const stmts = toolOutput.statements || [];
+      const lines = [`Total statements: ${stmts.length}`, `Total transactions: ${toolOutput.transactions?.length || 0}`];
+      stmts.forEach((s) => {
+        lines.push(`  ${s.file}: ${s.transactionCount} tx | Opening $${s.openingBalance?.toFixed(2) ?? "?"} → Closing $${s.closingBalance?.toFixed(2) ?? "?"} | Debits $${s.totalDebits?.toFixed(2) ?? "?"} Credits $${s.totalCredits?.toFixed(2) ?? "?"}`);
+      });
+      if (toolOutput.dateGaps?.length > 0)
+        lines.push(`Date gaps: ${toolOutput.dateGaps.map((g) => `${g.file} ${g.from}→${g.to} (${g.dayGap}d)`).join(", ")}`);
+      return lines.join("\n");
+    }
+    if (toolName === "extraction-invoice") {
+      const invs = toolOutput.invoices || [];
+      const amounts = invs.map((i) => i.total).filter((a) => a > 0).sort((a, b) => a - b);
+      const median = amounts.length ? amounts[Math.floor(amounts.length / 2)] : 0;
+      return [
+        `Total invoices: ${invs.length}`,
+        `Success: ${toolOutput.summary?.successCount || 0} | Failed: ${toolOutput.summary?.errorCount || 0}`,
+        `Amount range: $${amounts[0]?.toFixed(2) || 0} – $${amounts[amounts.length - 1]?.toFixed(2) || 0} | Median: $${median.toFixed(2)}`,
+        `Vendors: ${[...new Set(invs.map((i) => i.vendorName).filter(Boolean))].slice(0, 6).join(", ")}`,
+      ].join("\n");
+    }
+    if (toolName === "transaction-analysis") {
+      const accs = toolOutput.accounts || [];
+      return [
+        `Files: ${toolOutput.fileCount || 0} | Accounts: ${accs.length}`,
+        ...accs.map((a) => `  ${a.name}: ${a.totalTransactions || 0} tx, ${a.monthlyData?.filter((m) => m.count > 0).length || 0} active months`),
+        `Flagged transfers: ${toolOutput.flaggedTransfers?.length || 0}`,
+      ].join("\n");
+    }
+    if (toolName === "tracker") {
+      return [
+        `Bank accounts: ${toolOutput.totalBankAccounts || 0} | Credit cards: ${toolOutput.totalCreditCards || 0}`,
+        `Months: ${toolOutput.totalMonths || 0} | Gaps: ${toolOutput.gaps || 0}`,
+        toolOutput.missingMonths?.length ? `Missing: ${toolOutput.missingMonths.slice(0, 8).join(", ")}` : "No missing months",
+      ].filter(Boolean).join("\n");
+    }
+    if (toolName === "categorisation") {
+      const files = toolOutput.files || [];
+      const folders = {};
+      files.forEach((f) => { folders[f.folder] = (folders[f.folder] || 0) + 1; });
+      const top = Object.entries(folders).sort((a, b) => b[1] - a[1]).slice(0, 7);
+      return [`Total: ${files.length} files`, `Distribution: ${top.map(([f, c]) => `${f.split("_").slice(1).join(" ")} (${c})`).join(", ")}`].join("\n");
+    }
+    if (toolName === "bates-stamp") {
+      const files = toolOutput.files || [];
+      const nums = files.map((f) => f.batesNumber || f.startBates).filter(Boolean);
+      return [
+        `Stamped: ${toolOutput.stampedCount || 0} / ${toolOutput.totalFiles || 0} files`,
+        `Range: ${nums[0] || "?"} → ${nums[nums.length - 1] || "?"}`,
+        `Pages: ${toolOutput.totalStampedPages || "?"} stamped vs ${toolOutput.totalInputPages || "?"} input`,
+      ].join("\n");
+    }
+    if (toolName === "splitter") {
+      const splits = toolOutput.splits || [];
+      return [`Splits: ${splits.length} | Total pages: ${toolOutput.totalPages || 0}`, ...splits.map((s) => `  "${s.name}": ${s.pageCount || s.pages || 0} pages`)].join("\n");
+    }
+    if (toolName === "desc-categoriser") {
+      const descs = toolOutput.descriptions || [];
+      const cats = {};
+      descs.forEach((d) => { cats[d.category] = (cats[d.category] || 0) + 1; });
+      const top = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 8);
+      return [`Total: ${descs.length} descriptions`, `Categories: ${top.map(([c, n]) => `${c} (${n})`).join(", ")}`].join("\n");
+    }
+    return JSON.stringify(toolOutput).slice(0, 2000);
+  } catch {
+    return JSON.stringify(toolOutput).slice(0, 2000);
+  }
+}
 
-  // Tool-specific context for the AI
-  const toolContext = {
-    "extraction": `You are reviewing bank statement extraction output.
-Key checks:
-- Do opening balance + total credits - total debits = closing balance?
-- Are transaction dates sequential with no impossible jumps?
-- Are there any transactions with amounts that seem like OCR errors (e.g. $1,234,567 when others are under $10,000)?
-- Are descriptions meaningful or do they look truncated/garbled?
-- Is the transaction count reasonable for the number of pages?
-- Are debit/credit columns consistent (not swapped)?`,
+// ─────────────────────────────────────────────────────────────
+// LAYER 2: AI Analysis
+// ─────────────────────────────────────────────────────────────
+async function runAIAnalysis(toolName, toolOutput, ruleFindings) {
+  const domainKnowledge = DOMAIN_PROMPTS[toolName] || "";
+  const factsSummary = buildFactsSummary(toolName, toolOutput);
+  const ruleIssues = ruleFindings.filter((f) => f.type === "issue").map((f) => `[${f.sev.label}] ${f.msg}`);
+  const ruleWarnings = ruleFindings.filter((f) => f.type === "warning").map((f) => f.msg);
 
-    "splitter": `You are reviewing PDF document splitting output.
-Key checks:
-- Does the number of splits make sense for the document type?
-- Are split names meaningful and correctly assigned?
-- Are page ranges contiguous with no gaps or overlaps?
-- Does the total page count across splits match the original PDF?`,
+  const systemPrompt = `${domainKnowledge}
 
-    "categorisation": `You are reviewing legal document categorisation output.
-Key checks:
-- Are documents assigned to the correct legal category based on their names?
-- Are there documents in wrong folders (e.g. a bank statement in Court Filings)?
-- Is the confidence distribution reasonable?
-- Are too many documents in Miscellaneous (catch-all) folder?`,
+YOUR TASK:
+Rule checks have already caught basic errors. Find what they missed using your domain expertise.
+Think like opposing counsel trying to find problems — then check if those problems exist in the data.
 
-    "bates-stamp": `You are reviewing Bates stamp numbering output.
-Key checks:
-- Is the Bates sequence continuous with no gaps or duplicates?
-- Were all PDFs in the batch processed?
-- Are any files skipped that should not have been?
-- Is the prefix format consistent across all stamped files?`,
+SCORING:
+90-100: Clean, court-ready.
+75-89:  Minor issues, usable with spot-check.
+55-74:  Real problems, requires correction.
+30-54:  Significant errors, re-run needed.
+0-29:   Unreliable, do not use.
 
-    "tracker": `You are reviewing a bank/credit card statement tracker output.
-Key checks:
-- Are there gaps (?) in months that should have data?
-- Is the date range continuous and reasonable?
-- Are bank account names normalized consistently?
-- Are all accounts from the input files represented in the tracker?`,
+RULES:
+- Be SPECIFIC — name the file, date, amount when flagging
+- If data looks clean, score high. Do not manufacture concerns.
+- Summary must be written for an attorney or senior analyst, not a developer.
 
-    "desc-categoriser": `You are reviewing transaction description categorisation output.
-Key checks:
-- Are business expense descriptions categorised correctly?
-- Are there descriptions that seem miscategorised (e.g. "APPLE.COM/BILL" as Food instead of Software)?
-- Is the category distribution reasonable for a business?
-- Are any high-frequency descriptions getting wrong categories?`,
-
-    "transaction-analysis": `You are reviewing a transaction pattern analysis output.
-Key checks:
-- Are there accounts with unusually high or low transaction volumes?
-- Are there months with zero activity that look suspicious?
-- Do the file names and metadata suggest the analysis covered all uploaded files?
-- Are there any data quality indicators suggesting the pivot was built incorrectly?`,
-  };
-
-  const context = toolContext[toolName] || "You are reviewing document processing tool output for quality issues.";
-
-  const systemPrompt = `You are a senior forensic financial analyst and document QC specialist.
-You work for a legal services firm that processes financial documents for litigation and compliance cases.
-All documents are international — primarily USD-denominated financial records.
-Transaction types include: wire transfers, ACH payments, checks, credit card charges, bank fees, interest, forex.
-
-Your role is to identify quality issues that automated rule checks cannot detect:
-- Logical inconsistencies in financial data
-- Patterns suggesting extraction errors or OCR failures  
-- Data completeness problems
-- Anomalies that a human reviewer would flag
-- Issues that could cause problems in legal proceedings
-
-${context}
-
-SCORING CRITERIA — be precise and consistent:
-90-100: Clean output, no significant issues, ready for legal use
-75-89:  Minor issues present, usable but warrants review before submission
-55-74:  Multiple issues, requires correction before use
-30-54:  Significant quality problems, re-run recommended
-0-29:   Output is unreliable, do not use without full manual review
-
-CRITICAL RULES:
-- Only flag issues you can actually see evidence of in the data
-- Do not invent problems that aren't there
-- Be specific — name accounts, dates, amounts when flagging issues
-- Keep each issue/warning to one clear sentence
-- Recommendations must be actionable, not generic
-
-Return ONLY valid JSON. No markdown. No text before or after.
-Exact structure required:
+Return ONLY valid JSON:
 {
-  "aiScore": <integer 0-100>,
-  "aiIssues": ["<specific serious issue with evidence>"],
-  "aiWarnings": ["<specific minor concern with evidence>"],
+  "aiScore": <0-100>,
+  "aiIssues": ["<specific issue with evidence>"],
+  "aiWarnings": ["<specific warning with evidence>"],
   "aiRecommendations": ["<specific actionable step>"],
-  "aiSummary": "<2-3 sentence professional assessment of output quality and readiness for use>"
+  "aiSummary": "<2-3 sentence professional assessment>"
 }`;
 
   const userPrompt = `TOOL: ${toolName}
 
-RULE-BASED CHECKS ALREADY FOUND:
-Issues: ${JSON.stringify(ruleIssues)}
-Warnings: ${JSON.stringify(ruleWarnings)}
+RULE CHECKS FOUND:
+Issues: ${ruleIssues.length > 0 ? ruleIssues.join(" | ") : "none"}
+Warnings: ${ruleWarnings.length > 0 ? ruleWarnings.join(" | ") : "none"}
 
-TOOL OUTPUT DATA (first 4000 characters):
-${outputSample}
+DATA:
+${factsSummary}
 
-Perform a deep quality analysis. Look beyond the rule checks above.
-Focus on issues that matter for legal document processing accuracy.
-If the data looks clean and complete, say so — do not manufacture concerns.
-Score honestly based on what you can actually see in the output.`;
+What did the rules miss?`;
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 1200,
+    max_tokens: 1500,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  const rawText = response.content[0].text.trim();
-
-  // Strip any accidental markdown fences
-  const cleaned = rawText.replace(/```json|```/g, "").trim();
-  const parsed = JSON.parse(cleaned);
-  return parsed;
+  const raw = response.content[0].text.trim().replace(/```json|```/g, "").trim();
+  return JSON.parse(raw);
 }
 
 // ─────────────────────────────────────────────────────────────
 // SCORE CALCULATOR
+// Uses severity-weighted deductions + cap + per-tool AI/rule weights
 // ─────────────────────────────────────────────────────────────
-function calculateFinalScore(ruleIssues, ruleWarnings, aiScore) {
-  let ruleScore = 100;
-  ruleScore -= ruleIssues.length * 15;
-  ruleScore -= ruleWarnings.length * 5;
-  ruleScore = Math.max(0, ruleScore);
+function calculateScore(toolName, ruleFindings, aiScore) {
+  const cfg = TOOL_CONFIG[toolName] || { ruleWeight: 0.60, aiWeight: 0.40, cap: 40, passAt: 88 };
 
-  // 60% rule-based weight, 40% AI weight
-  const blended = ruleScore * 0.6 + aiScore * 0.4;
+  // Rule score: deduct by severity, capped
+  const totalDeduct = ruleFindings.reduce((sum, f) => sum + f.sev.deduct, 0);
+  const cappedDeduct = Math.min(totalDeduct, cfg.cap);
+  const ruleScore = Math.max(0, 100 - cappedDeduct);
+
+  const blended = ruleScore * cfg.ruleWeight + aiScore * cfg.aiWeight;
   return Math.max(0, Math.min(100, Math.round(blended)));
 }
 
-function getStatus(score) {
-  if (score >= 90) return "PASS";
-  if (score >= 70) return "WARNING";
+function getStatus(toolName, score) {
+  const cfg = TOOL_CONFIG[toolName] || { passAt: 88 };
+  if (score >= cfg.passAt) return "PASS";
+  if (score >= 65) return "WARNING";
   return "FAIL";
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXPLAINABILITY — top score-impact items for the UI
+// ─────────────────────────────────────────────────────────────
+function buildScoreBreakdown(ruleFindings, aiScore) {
+  // Sort by deduction impact (severity), take top 3
+  const sorted = [...ruleFindings].sort((a, b) => b.sev.deduct - a.sev.deduct).slice(0, 3);
+  return sorted.map((f) => ({
+    label: f.msg,
+    impact: f.sev.deduct,
+    severity: f.sev.label,
+    type: f.type,
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -427,66 +816,61 @@ export async function POST(req) {
     const { toolName, toolOutput, metadata } = body;
 
     if (!toolName || !toolOutput) {
-      return NextResponse.json(
-        { error: "Both toolName and toolOutput are required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Both toolName and toolOutput are required" }, { status: 400 });
     }
 
-    // Layer 1: Rule checks — instant
-    const { issues: ruleIssues, warnings: ruleWarnings } = runRuleChecks(
-      toolName,
-      { ...toolOutput, metadata }
-    );
+    const enriched = { ...toolOutput, ...(metadata || {}) };
 
-    // Layer 2: AI analysis — with proper fallback
+    // Layer 1
+    const ruleFindings = runRuleChecks(toolName, enriched);
+    const ruleIssues   = ruleFindings.filter((f) => f.type === "issue").map((f) => f.msg);
+    const ruleWarnings = ruleFindings.filter((f) => f.type === "warning").map((f) => f.msg);
+
+    // Layer 2
     let aiResult = {
-      aiScore: 75,
+      aiScore: 70,
       aiIssues: [],
       aiWarnings: [],
-      aiRecommendations: ["Re-run QC once AI analysis is available for deeper insights."],
-      aiSummary: "AI deep analysis could not complete. Rule-based checks were applied. Results reflect automated checks only.",
+      aiRecommendations: ["Re-run QC once AI analysis is available."],
+      aiSummary: "AI analysis unavailable. Rule-based checks applied only.",
     };
-
     try {
-      aiResult = await runAIAnalysis(toolName, toolOutput, ruleIssues, ruleWarnings);
-    } catch (aiError) {
-      console.error("QC AI analysis failed:", aiError.message);
-      // Log what actually failed for debugging
-      console.error("Tool:", toolName, "| Output keys:", Object.keys(toolOutput || {}));
+      aiResult = await runAIAnalysis(toolName, toolOutput, ruleFindings);
+    } catch (err) {
+      console.error("QC AI failed:", err.message, "| Tool:", toolName);
     }
 
-    const finalScore = calculateFinalScore(ruleIssues, ruleWarnings, aiResult.aiScore);
-    const status = getStatus(finalScore);
-
-    const allIssues = [...ruleIssues, ...(aiResult.aiIssues || [])];
-    const allWarnings = [...ruleWarnings, ...(aiResult.aiWarnings || [])];
+    const finalScore   = calculateScore(toolName, ruleFindings, aiResult.aiScore);
+    const status       = getStatus(toolName, finalScore);
+    const breakdown    = buildScoreBreakdown(ruleFindings, aiResult.aiScore);
 
     return NextResponse.json({
       status,
       score: finalScore,
-      issues: allIssues,
-      warnings: allWarnings,
+      issues:          [...ruleIssues,   ...(aiResult.aiIssues   || [])],
+      warnings:        [...ruleWarnings, ...(aiResult.aiWarnings  || [])],
       recommendations: aiResult.aiRecommendations || [],
-      summary: aiResult.aiSummary,
+      summary:         aiResult.aiSummary,
+      // Explainability — top 3 things that hurt the score most
+      scoreBreakdown:  breakdown,
       meta: {
         toolName,
-        ruleIssueCount: ruleIssues.length,
+        ruleIssueCount:   ruleIssues.length,
         ruleWarningCount: ruleWarnings.length,
-        aiScore: aiResult.aiScore,
-        timestamp: new Date().toISOString(),
+        aiScore:          aiResult.aiScore,
+        timestamp:        new Date().toISOString(),
       },
     });
-
   } catch (err) {
-    console.error("QC Agent critical error:", err.message);
+    console.error("QC critical error:", err.message);
     return NextResponse.json({
       status: "WARNING",
       score: 50,
       issues: [],
-      warnings: ["QC Agent encountered an unexpected error. Manual review recommended."],
-      recommendations: ["Check server logs for QC Agent error details."],
-      summary: "QC could not complete due to a system error. Please review output manually before use.",
+      warnings: ["QC encountered an unexpected error. Manual review recommended."],
+      recommendations: ["Check server logs for error details."],
+      summary: "QC could not complete due to a system error.",
+      scoreBreakdown: [],
     });
   }
 }
