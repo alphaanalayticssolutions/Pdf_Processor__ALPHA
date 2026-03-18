@@ -4,18 +4,21 @@ import QCBadge from "@/components/QCBadge";
 
 const VALID_USERS = [
   { email: 'akshitapal80@alphaanalyticssol.com', password: 'Alpha@2024' },
-  { email: 'krishna@alphaanalyticssol.com', password: 'Alpha@2024' },
-  { email: 'ashutosh@alphaanalyticssol.com', password: 'Alpha@2024' },
-  { email: 'info@alphaanalyticssol.com', password: 'Alpha@2024' },
-  { email: 'careers@alphaanalyticssol.com', password: 'Alpha@2024' },
-  { email: 'neelima@alphaanalyticssol.com', password: 'Alpha@2024' },
+  { email: 'krishna@alphaanalyticssol.com',      password: 'Alpha@2024' },
+  { email: 'ashutosh@alphaanalyticssol.com',     password: 'Alpha@2024' },
+  { email: 'info@alphaanalyticssol.com',         password: 'Alpha@2024' },
+  { email: 'careers@alphaanalyticssol.com',      password: 'Alpha@2024' },
+  { email: 'neelima@alphaanalyticssol.com',      password: 'Alpha@2024' },
 ];
 const COMPANY_DOMAIN = '@alphaanalyticssol.com';
 
+// ─────────────────────────────────────────────────────────────
+// LOGIN PAGE
+// ─────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [email, setEmail] = useState('');
+  const [email, setEmail]     = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError]     = useState('');
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
 
@@ -29,7 +32,8 @@ function LoginPage({ onLogin }) {
     setLoading(true);
     setTimeout(() => {
       const user = VALID_USERS.find(u => u.email === email.toLowerCase().trim() && u.password === password);
-      if (user) { onLogin(user.email); } else { setError('Invalid credentials. Please contact your administrator.'); }
+      if (user) { onLogin(user.email); }
+      else { setError('Invalid credentials. Please contact your administrator.'); }
       setLoading(false);
     }, 800);
   };
@@ -94,26 +98,29 @@ function LoginPage({ onLogin }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// HOME / DASHBOARD
+// ─────────────────────────────────────────────────────────────
 export default function Home() {
   const [activeTool, setActiveTool] = useState(null);
-  const [loggedIn, setLoggedIn] = useState(false);
-  const [userEmail, setUserEmail] = useState('');
+  const [loggedIn, setLoggedIn]     = useState(false);
+  const [userEmail, setUserEmail]   = useState('');
 
-  const handleLogin = (email) => { setLoggedIn(true); setUserEmail(email); };
+  const handleLogin  = (email) => { setLoggedIn(true); setUserEmail(email); };
   const handleLogout = () => { setLoggedIn(false); setUserEmail(''); setActiveTool(null); };
 
   if (!loggedIn) return <LoginPage onLogin={handleLogin} />;
 
   const tools = [
-    { id: 'duplicate', step: 1, icon: '📊', title: 'Duplicate Report', desc: 'Scan folder → Find duplicates using SHA-256 hash → Download Excel report', active: true },
-    { id: 'splitter', step: 2, icon: '✂️', title: 'PDF Splitter', desc: 'Split bank statements, invoices & tax filings — manually or let AI decide', active: true },
-    { id: 'categorise', step: 3, icon: '📂', title: 'Categorisation', desc: 'Upload mixed documents → AI sorts them into category folders automatically', active: true },
-    { id: 'stamping', step: 4, icon: '📄', title: 'Bates Stamping', desc: 'Upload folder → AI detects empty corner → Stamps every page sequentially', active: true },
-    { id: 'extraction', step: 5, icon: '🔍', title: 'Extraction', desc: 'Extract data from Invoices, Bank Statements & Tax documents into Excel', active: true },
-    { id: 'tracker', step: 6, icon: '📋', title: 'Statement Tracker', desc: 'Upload Bank & Credit Card extraction Excels → AI generates unified month-wise tracker', active: true },
-    { id: 'desc-categoriser', step: 7, icon: '🏷️', title: 'Description Categoriser', desc: 'Upload Excel with distinct descriptions → AI categorises each → Download Excel', active: true },
-    { id: 'transaction-analysis', step: 8, icon: '📈', title: 'Transaction Analysis', desc: 'Upload CSV/Excel → Account × Month pivot table → Heatmap Excel output', active: true },
-    { id: 'indexing', step: 9, icon: '📁', title: 'Indexing', desc: 'Coming soon — Auto-organize files with AI-generated index', active: false },
+    { id: 'duplicate',            step: 1, icon: '📊', title: 'Duplicate Report',        desc: 'Scan folder → Find duplicates using SHA-256 hash → Download Excel report',                                active: true  },
+    { id: 'splitter',             step: 2, icon: '✂️', title: 'PDF Splitter',             desc: 'Split bank statements, invoices & tax filings — manually or let AI decide',                              active: true  },
+    { id: 'categorise',           step: 3, icon: '📂', title: 'Categorisation',           desc: 'Upload mixed documents → AI sorts them into category folders automatically',                              active: true  },
+    { id: 'stamping',             step: 4, icon: '📄', title: 'Bates Stamping',           desc: 'Upload folder → AI detects empty corner → Stamps every page sequentially',                               active: true  },
+    { id: 'extraction',           step: 5, icon: '🔍', title: 'Extraction',               desc: 'Extract data from Invoices, Bank Statements & Tax documents into Excel',                                 active: true  },
+    { id: 'tracker',              step: 6, icon: '📋', title: 'Statement Tracker',        desc: 'Upload Bank & Credit Card extraction Excels → AI generates unified month-wise tracker',                  active: true  },
+    { id: 'desc-categoriser',     step: 7, icon: '🏷️', title: 'Description Categoriser', desc: 'Upload Excel with distinct descriptions → AI categorises each → Download Excel',                         active: true  },
+    { id: 'transaction-analysis', step: 8, icon: '📈', title: 'Transaction Analysis',     desc: 'Upload CSV/Excel → Account × Month pivot table → Heatmap Excel output',                                 active: true  },
+    { id: 'indexing',             step: 9, icon: '📁', title: 'Indexing',                 desc: 'Coming soon — Auto-organize files with AI-generated index',                                              active: false },
   ];
 
   return (
@@ -130,16 +137,10 @@ export default function Home() {
         <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.15)', borderRadius: '30px', padding: '6px 20px', marginBottom: '18px' }}>
           <span style={{ color: 'white', fontSize: '12px', letterSpacing: '3px', fontWeight: '600' }}>LEGAL DOCUMENT PLATFORM</span>
         </div>
-        <h1 style={{ fontSize: '48px', fontWeight: '800', color: '#ffffff', textAlign: 'center', margin: '30px 0 14px 0', letterSpacing: '-0.5px' }}>
-          Automate Your Legal Operations
-        </h1>
-        <p style={{ fontSize: '18px', fontWeight: '400', color: '#ffffff', textAlign: 'center', marginBottom: '32px', lineHeight: '1.6' }}>
-          AI-powered document processing — follow the steps in order for best results
-        </p>
-        <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '12px', padding: '10px 26px', boxShadow: '0 8px 30px rgba(0,0,0,0.4), 0 0 12px rgba(255,255,255,0.15)' }}>
-          <span style={{ color: '#ffffff', fontSize: '13px', letterSpacing: '1.5px', fontWeight: '600' }}>
-            🔒 FILES PROCESSED IN MEMORY — NEVER STORED
-          </span>
+        <h1 style={{ fontSize: '48px', fontWeight: '800', color: '#ffffff', margin: '30px 0 14px 0', letterSpacing: '-0.5px' }}>Automate Your Legal Operations</h1>
+        <p style={{ fontSize: '18px', color: '#ffffff', marginBottom: '32px', lineHeight: '1.6' }}>AI-powered document processing — follow the steps in order for best results</p>
+        <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '12px', padding: '10px 26px' }}>
+          <span style={{ color: '#ffffff', fontSize: '13px', letterSpacing: '1.5px', fontWeight: '600' }}>🔒 FILES PROCESSED IN MEMORY — NEVER STORED</span>
         </div>
       </div>
 
@@ -164,7 +165,7 @@ export default function Home() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             {tools.map(tool => (
               <div key={tool.id} onClick={() => tool.active && setActiveTool(tool.id)}
-                style={{ background: 'white', borderRadius: '12px', padding: '24px', cursor: tool.active ? 'pointer' : 'default', border: '2px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', opacity: tool.active ? 1 : 0.5, transition: 'all 0.2s', position: 'relative' }}
+                style={{ background: 'white', borderRadius: '12px', padding: '24px', cursor: tool.active ? 'pointer' : 'default', border: '2px solid #eee', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', opacity: tool.active ? 1 : 0.5, transition: 'all 0.2s' }}
                 onMouseOver={e => { if (tool.active) { e.currentTarget.style.borderColor = '#1a3c6e'; e.currentTarget.style.boxShadow = '0 4px 16px rgba(26,60,110,0.12)'; } }}
                 onMouseOut={e => { e.currentTarget.style.borderColor = '#eee'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.05)'; }}>
                 <div style={{ fontSize: '32px', marginBottom: '10px' }}>{tool.icon}</div>
@@ -175,14 +176,14 @@ export default function Home() {
           </div>
         )}
 
-        {activeTool === 'duplicate'            && <DuplicateTool             onBack={() => setActiveTool(null)} />}
-        {activeTool === 'splitter'             && <SplitterTool              onBack={() => setActiveTool(null)} />}
-        {activeTool === 'categorise'           && <CategoriseTool            onBack={() => setActiveTool(null)} />}
-        {activeTool === 'stamping'             && <StampingTool              onBack={() => setActiveTool(null)} />}
-        {activeTool === 'extraction'           && <ExtractionTool            onBack={() => setActiveTool(null)} />}
-        {activeTool === 'tracker'              && <StatementTrackerTool      onBack={() => setActiveTool(null)} />}
+        {activeTool === 'duplicate'            && <DuplicateTool              onBack={() => setActiveTool(null)} />}
+        {activeTool === 'splitter'             && <SplitterTool               onBack={() => setActiveTool(null)} />}
+        {activeTool === 'categorise'           && <CategoriseTool             onBack={() => setActiveTool(null)} />}
+        {activeTool === 'stamping'             && <StampingTool               onBack={() => setActiveTool(null)} />}
+        {activeTool === 'extraction'           && <ExtractionTool             onBack={() => setActiveTool(null)} />}
+        {activeTool === 'tracker'              && <StatementTrackerTool       onBack={() => setActiveTool(null)} />}
         {activeTool === 'desc-categoriser'     && <DescriptionCategoriserTool onBack={() => setActiveTool(null)} />}
-        {activeTool === 'transaction-analysis' && <TransactionAnalysisTool   onBack={() => setActiveTool(null)} />}
+        {activeTool === 'transaction-analysis' && <TransactionAnalysisTool    onBack={() => setActiveTool(null)} />}
       </div>
 
       <div style={{ textAlign: 'center', padding: '20px', color: '#ccc', fontSize: '11px', letterSpacing: '1px' }}>
@@ -192,15 +193,15 @@ export default function Home() {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // TRANSACTION ANALYSIS TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 function TransactionAnalysisTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [result, setResult] = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [result, setResult]     = useState(null);
 
   const loadFiles = (fileList) => {
     const valid = Array.from(fileList).filter(f => {
@@ -254,11 +255,8 @@ function TransactionAnalysisTool({ onBack }) {
       setResult({
         url,
         fileName: data.fileName || 'Transaction_Analysis.xlsx',
-        fileCount: selectedFiles.length,
-        filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
         qcData: data.qcData || {
           fileCount: selectedFiles.length,
-          filesAnalysed: selectedFiles.map(f => ({ name: f.name, sizeKB: Math.round(f.size / 1024) })),
           accounts: [],
           flaggedTransfers: [],
         },
@@ -278,7 +276,7 @@ function TransactionAnalysisTool({ onBack }) {
 
   const handleClear = () => {
     if (result?.url) URL.revokeObjectURL(result.url);
-    setAllFiles([]); setSelected({}); setResult(null); setError('');
+    clearAll();
   };
 
   return (
@@ -309,9 +307,7 @@ function TransactionAnalysisTool({ onBack }) {
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>
-              📊 Select files ({selectedFiles.length} of {allFiles.length} selected)
-            </label>
+            <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>📊 Select files ({selectedFiles.length} of {allFiles.length} selected)</label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
                 {allChecked ? 'Deselect All' : 'Select All'}
@@ -362,15 +358,15 @@ function TransactionAnalysisTool({ onBack }) {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // STATEMENT TRACKER TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 function StatementTrackerTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [result, setResult] = useState(null);
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [result, setResult]     = useState(null);
 
   const loadFiles = (fileList) => {
     const excels = Array.from(fileList).filter(f =>
@@ -513,12 +509,12 @@ function StatementTrackerTool({ onBack }) {
           <QCBadge
             toolName="tracker"
             toolOutput={{
-              gaps: result.totalGaps || 0,
-              totalMonths: result.totalMonths || 0,
-              totalBankAccounts: result.totalBankAccounts || 0,
-              totalCreditCards: result.totalCreditCards || 0,
-              missingMonths: result.missingMonths || [],
-              duplicateAccounts: result.duplicateAccounts || [],
+              gaps:               result.totalGaps         || 0,
+              totalMonths:        result.totalMonths        || 0,
+              totalBankAccounts:  result.totalBankAccounts  || 0,
+              totalCreditCards:   result.totalCreditCards   || 0,
+              missingMonths:      result.missingMonths      || [],
+              duplicateAccounts:  result.duplicateAccounts  || [],
             }}
             metadata={{}}
           />
@@ -532,17 +528,17 @@ function StatementTrackerTool({ onBack }) {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // DESCRIPTION CATEGORISER TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 function DescriptionCategoriserTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading]   = useState(false);
   const [progress, setProgress] = useState('');
-  const [error, setError] = useState('');
-  const [results, setResults] = useState([]);
-  const [done, setDone] = useState(false);
+  const [error, setError]       = useState('');
+  const [results, setResults]   = useState([]);
+  const [done, setDone]         = useState(false);
 
   const loadFiles = (fileList) => {
     const excels = Array.from(fileList).filter(f =>
@@ -627,7 +623,7 @@ function DescriptionCategoriserTool({ onBack }) {
     }
   };
 
-  const downloadExcel = () => {
+  const downloadCSV = () => {
     const rows = [['Description', 'Category'], ...results.map(r => [r.description, r.category])];
     const csv  = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -697,7 +693,7 @@ function DescriptionCategoriserTool({ onBack }) {
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0' }}>✅ {results.length} descriptions categorised!</p>
-            <button onClick={downloadExcel}
+            <button onClick={downloadCSV}
               style={{ padding: '10px 20px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
               ⬇ Download CSV
             </button>
@@ -705,7 +701,7 @@ function DescriptionCategoriserTool({ onBack }) {
           <QCBadge
             toolName="desc-categoriser"
             toolOutput={{
-              descriptions: results.map(r => ({ description: r.description, category: r.category, confidence: r.confidence || null })),
+              descriptions:      results.map(r => ({ description: r.description, category: r.category, confidence: r.confidence || null })),
               semanticMismatches: [],
             }}
             metadata={{}}
@@ -742,14 +738,14 @@ function DescriptionCategoriserTool({ onBack }) {
   );
 }
 
-// ==========================================
-// DUPLICATE REPORT TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
+// DUPLICATE REPORT TOOL  (no QC — no AI involved)
+// ─────────────────────────────────────────────────────────────
 function DuplicateTool({ onBack }) {
-  const [files, setFiles]         = useState([]);
+  const [files, setFiles]           = useState([]);
   const [processing, setProcessing] = useState(false);
-  const [result, setResult]       = useState(null);
-  const [error, setError]         = useState('');
+  const [result, setResult]         = useState(null);
+  const [error, setError]           = useState('');
 
   const handleFolderSelect = (e) => {
     setFiles(Array.from(e.target.files).filter(f => f.size > 0 && !f.name.startsWith('.')));
@@ -768,13 +764,13 @@ function DuplicateTool({ onBack }) {
     try {
       const fileData = [], hashMap = {};
       for (const file of files) {
-        const hash  = await hashFile(file);
+        const hash   = await hashFile(file);
         const sizeKB = (file.size / 1024).toFixed(2);
         fileData.push({ fileName: file.name, hash, sizeKB });
         if (!hashMap[hash]) hashMap[hash] = [];
         hashMap[hash].push(file.name);
       }
-      const duplicates     = Object.entries(hashMap).filter(([, files]) => files.length > 1).map(([hash, files]) => ({ hash, files }));
+      const duplicates     = Object.entries(hashMap).filter(([, f]) => f.length > 1).map(([hash, f]) => ({ hash, files: f }));
       const duplicateCount = duplicates.reduce((acc, g) => acc + g.files.length - 1, 0);
       const res  = await fetch('/api/duplicate-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileData, hashMap, duplicateCount, duplicates }) });
       const data = await res.json();
@@ -830,18 +826,18 @@ function DuplicateTool({ onBack }) {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // PDF SPLITTER TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 function SplitterTool({ onBack }) {
-  const [file, setFile]           = useState(null);
-  const [docType, setDocType]     = useState('auto');
-  const [splitMode, setSplitMode] = useState('ai');
+  const [file, setFile]             = useState(null);
+  const [docType, setDocType]       = useState('auto');
+  const [splitMode, setSplitMode]   = useState('ai');
   const [splitPages, setSplitPages] = useState('');
   const [splitNames, setSplitNames] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [result, setResult]       = useState(null);
-  const [progress, setProgress]   = useState('');
+  const [result, setResult]         = useState(null);
+  const [progress, setProgress]     = useState('');
 
   const handleSubmit = async () => {
     if (!file) { alert('Please select a PDF!'); return; }
@@ -860,6 +856,7 @@ function SplitterTool({ onBack }) {
     const bytes = Uint8Array.from(atob(zipData), c => c.charCodeAt(0));
     const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
     Object.assign(document.createElement('a'), { href: url, download: 'split_documents.zip' }).click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -925,7 +922,10 @@ function SplitterTool({ onBack }) {
           </button>
           <QCBadge
             toolName="splitter"
-            toolOutput={{ splits: result.documents.map(d => ({ name: d.name, pageCount: d.pages })), totalPages: result.totalPages || 0 }}
+            toolOutput={{
+              splits:     result.documents.map(d => ({ name: d.name, pageCount: d.pages })),
+              totalPages: result.totalPages || 0,
+            }}
             metadata={{}}
           />
         </div>
@@ -934,19 +934,19 @@ function SplitterTool({ onBack }) {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // CATEGORISATION TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 const ALL_CATEGORIES = [
-  { folder: '01_Bank_Statements', icon: '🏦' }, { folder: '02_Financial_Records', icon: '📊' },
-  { folder: '03_Tax_Documents', icon: '🧾' }, { folder: '04_Invoices_And_Receipts', icon: '🧾' },
-  { folder: '05_Contracts', icon: '📋' }, { folder: '06_Legal_Agreements', icon: '🤝' },
-  { folder: '07_Corporate_Documents', icon: '🏢' }, { folder: '08_Correspondence', icon: '✉️' },
-  { folder: '09_Court_Filings', icon: '⚖️' }, { folder: '10_Employment_Records', icon: '👤' },
+  { folder: '01_Bank_Statements', icon: '🏦' },      { folder: '02_Financial_Records', icon: '📊' },
+  { folder: '03_Tax_Documents', icon: '🧾' },         { folder: '04_Invoices_And_Receipts', icon: '🧾' },
+  { folder: '05_Contracts', icon: '📋' },              { folder: '06_Legal_Agreements', icon: '🤝' },
+  { folder: '07_Corporate_Documents', icon: '🏢' },   { folder: '08_Correspondence', icon: '✉️' },
+  { folder: '09_Court_Filings', icon: '⚖️' },         { folder: '10_Employment_Records', icon: '👤' },
   { folder: '11_Real_Estate_Documents', icon: '🏠' }, { folder: '12_Insurance_Documents', icon: '🛡️' },
   { folder: '13_Intellectual_Property', icon: '💡' }, { folder: '14_Regulatory_And_Compliance', icon: '📜' },
-  { folder: '15_Loan_And_Credit', icon: '💳' }, { folder: '16_Client_And_Customer_Records', icon: '👥' },
-  { folder: '17_Payment_Records', icon: '💸' }, { folder: '18_Digital_And_Electronic_Evidence', icon: '💻' },
+  { folder: '15_Loan_And_Credit', icon: '💳' },       { folder: '16_Client_And_Customer_Records', icon: '👥' },
+  { folder: '17_Payment_Records', icon: '💸' },       { folder: '18_Digital_And_Electronic_Evidence', icon: '💻' },
   { folder: '19_Expert_Reports_And_Appraisals', icon: '🔬' }, { folder: '20_Miscellaneous_Uncategorized', icon: '📁' },
 ];
 
@@ -961,10 +961,10 @@ function ConfidenceBadge({ confidence }) {
 }
 
 function CategoriseTool({ onBack }) {
-  const [files, setFiles]           = useState([]);
-  const [processing, setProcessing] = useState(false);
-  const [result, setResult]         = useState(null);
-  const [progress, setProgress]     = useState('');
+  const [files, setFiles]             = useState([]);
+  const [processing, setProcessing]   = useState(false);
+  const [result, setResult]           = useState(null);
+  const [progress, setProgress]       = useState('');
   const [expandedRow, setExpandedRow] = useState(null);
 
   const handleFolderSelect = (e) => {
@@ -993,6 +993,7 @@ function CategoriseTool({ onBack }) {
     const bytes = Uint8Array.from(atob(zipData), c => c.charCodeAt(0));
     const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
     Object.assign(document.createElement('a'), { href: url, download: 'categorised_documents.zip' }).click();
+    URL.revokeObjectURL(url);
   };
 
   const getFolderIcon = (folderName) => { const cat = ALL_CATEGORIES.find(c => c.folder === folderName); return cat ? cat.icon : '📁'; };
@@ -1020,9 +1021,9 @@ function CategoriseTool({ onBack }) {
         <div style={{ marginTop: '28px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '20px' }}>
             {[
-              { label: 'TOTAL FILES', value: result.totalFiles, color: '#1a3c6e' },
+              { label: 'TOTAL FILES',  value: result.totalFiles,  color: '#1a3c6e' },
               { label: 'FOLDERS USED', value: result.categoryCount, color: '#276749' },
-              { label: 'FLAGGED', value: result.categorizationResults?.filter(r => r.confidence === 'LOW' || r.confidence === 'MEDIUM').length || 0, color: '#b7791f' },
+              { label: 'FLAGGED',      value: result.categorizationResults?.filter(r => r.confidence === 'LOW' || r.confidence === 'MEDIUM').length || 0, color: '#b7791f' },
             ].map((s, i) => (
               <div key={i} style={{ background: '#f7f8fc', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
                 <p style={{ color: s.color, fontSize: '22px', fontWeight: '800', margin: '0' }}>{s.value}</p>
@@ -1031,29 +1032,27 @@ function CategoriseTool({ onBack }) {
             ))}
           </div>
           {result.categorizationResults && result.categorizationResults.length > 0 && (
-            <div style={{ marginBottom: '20px' }}>
-              <div style={{ border: '1px solid #eee', borderRadius: '8px', overflow: 'hidden' }}>
-                {result.categorizationResults.map((r, i) => (
-                  <div key={i}>
-                    <div onClick={() => setExpandedRow(expandedRow === i ? null : i)}
-                      style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '10px', alignItems: 'center', padding: '10px 14px', background: i % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: '12px', fontWeight: '600', color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {getFolderIcon(r.assigned_folder)} {r.original_filename}
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>→ {r.assigned_folder}</div>
+            <div style={{ marginBottom: '20px', border: '1px solid #eee', borderRadius: '8px', overflow: 'hidden' }}>
+              {result.categorizationResults.map((r, i) => (
+                <div key={i}>
+                  <div onClick={() => setExpandedRow(expandedRow === i ? null : i)}
+                    style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '10px', alignItems: 'center', padding: '10px 14px', background: i % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {getFolderIcon(r.assigned_folder)} {r.original_filename}
                       </div>
-                      <ConfidenceBadge confidence={r.confidence} />
-                      <span style={{ color: '#ccc', fontSize: '12px' }}>{expandedRow === i ? '▲' : '▼'}</span>
+                      <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>→ {r.assigned_folder}</div>
                     </div>
-                    {expandedRow === i && r.notes && (
-                      <div style={{ background: '#fffbeb', padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: '12px' }}>
-                        <span style={{ color: '#854d0e' }}>⚠️ {r.notes}</span>
-                      </div>
-                    )}
+                    <ConfidenceBadge confidence={r.confidence} />
+                    <span style={{ color: '#ccc', fontSize: '12px' }}>{expandedRow === i ? '▲' : '▼'}</span>
                   </div>
-                ))}
-              </div>
+                  {expandedRow === i && r.notes && (
+                    <div style={{ background: '#fffbeb', padding: '10px 14px', borderBottom: '1px solid #eee', fontSize: '12px' }}>
+                      <span style={{ color: '#854d0e' }}>⚠️ {r.notes}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
           <button onClick={() => downloadZip(result.zipFile)}
@@ -1064,10 +1063,11 @@ function CategoriseTool({ onBack }) {
             toolName="categorisation"
             toolOutput={{
               files: (result.categorizationResults || []).map(r => ({
-                file: r.original_filename,
-                folder: r.assigned_folder,
+                file:       r.original_filename,
+                folder:     r.assigned_folder,
+                // Map string confidence → float so rule checks work correctly
                 confidence: r.confidence === 'HIGH' ? 0.9 : r.confidence === 'MEDIUM' ? 0.5 : 0.2,
-                notes: r.notes,
+                notes:      r.notes,
               })),
               semanticMismatches: [],
             }}
@@ -1079,31 +1079,30 @@ function CategoriseTool({ onBack }) {
   );
 }
 
-// ==========================================
-// BATES STAMPING TOOL — FIXED
-// Fixes: dual upload boxes, checkbox file list, correct QC badge data
-// ==========================================
+// ─────────────────────────────────────────────────────────────
+// BATES STAMPING TOOL
+// FIX: buildQCData uses batesNumber (not batesStart) so QC sequence
+//      checks actually fire on the correct field name
+// ─────────────────────────────────────────────────────────────
 function StampingTool({ onBack }) {
-  const [allFiles, setAllFiles]       = useState([]);
-  const [selected, setSelected]       = useState({});
-  const [prefix, setPrefix]           = useState('DOC-');
-  const [startNumber, setStartNumber] = useState(1);
-  const [padLength, setPadLength]     = useState(6);
-  const [password, setPassword]       = useState('');
+  const [allFiles, setAllFiles]         = useState([]);
+  const [selected, setSelected]         = useState({});
+  const [prefix, setPrefix]             = useState('DOC-');
+  const [startNumber, setStartNumber]   = useState(1);
+  const [padLength, setPadLength]       = useState(6);
+  const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [cornerPct, setCornerPct]     = useState(10);
-  const [fontSize, setFontSize]       = useState(10);
-  const [stampColor, setStampColor]   = useState('black');
-  const [stampFont, setStampFont]     = useState('Helvetica');
+  const [cornerPct, setCornerPct]       = useState(10);
+  const [fontSize, setFontSize]         = useState(10);
+  const [stampColor, setStampColor]     = useState('black');
+  const [stampFont, setStampFont]       = useState('Helvetica');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [processing, setProcessing]   = useState(false);
-  const [result, setResult]           = useState(null);
-  const [error, setError]             = useState('');
+  const [processing, setProcessing]     = useState(false);
+  const [result, setResult]             = useState(null);
+  const [error, setError]               = useState('');
 
   const loadFiles = (fileList) => {
-    const pdfs = Array.from(fileList).filter(
-      f => f.name.toLowerCase().endsWith('.pdf') && f.size > 0
-    );
+    const pdfs = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf') && f.size > 0);
     setAllFiles(prev => {
       const existing = new Map(prev.map(f => [f.name, f]));
       pdfs.forEach(f => existing.set(f.name, f));
@@ -1161,41 +1160,40 @@ function StampingTool({ onBack }) {
     URL.revokeObjectURL(url);
   };
 
-  // Build QC data — uses processedFiles[] from new route.js if available,
-  // otherwise falls back to reconstructing Bates range from frontend state.
+  // ── BUILD QC DATA ────────────────────────────────────────────
+  // KEY FIX: use `batesNumber` field (not `batesStart`) so that
+  // the QC route's sequence checks (f.batesNumber || f.startBates)
+  // actually find the Bates numbers and run gap/duplicate detection.
   const buildQCData = () => {
-    const stamped      = result?.processedCount   || 0;
-    const totalPages   = result?.totalStampedPages || 0;
-    const pad          = Number(padLength)  || 6;
-    const start        = Number(startNumber) || 1;
+    const stamped    = result?.processedCount    || 0;
+    const totalPages = result?.totalStampedPages || 0;
+    const pad        = Number(padLength)  || 6;
+    const start      = Number(startNumber) || 1;
 
-    // If new route.js is deployed — use rich per-file data
+    // Prefer rich per-file data from updated route (has batesStart field)
     if (result?.processedFiles && result.processedFiles.length > 0) {
       return {
         files: result.processedFiles.map(f => ({
-          name:       f.name,
-          batesStart: f.batesStart,
-          batesEnd:   f.batesEnd,
-          pages:      f.pageCount,
-          position:   f.position,
+          name:        f.name,
+          batesNumber: f.batesStart,   // ← FIX: map to batesNumber so QC finds it
+          pages:       f.pageCount || 0,
+          position:    f.position,
         })),
         stampedCount:      stamped,
         totalFiles:        selectedFiles.length,
         totalStampedPages: totalPages,
+        totalInputPages:   totalPages, // same — skipped files have 0 pages
       };
     }
 
-    // Fallback — reconstruct from known frontend inputs.
-    // We know: prefix, startNumber, padLength, totalStampedPages, processedCount.
-    // Distribute pages evenly across stamped files as best estimate.
-    const pagesPerFile = stamped > 0 ? Math.round(totalPages / stamped) : totalPages;
-    let   cursor       = start;
-    const files        = selectedFiles.slice(0, stamped).map(f => {
-      const filePages = pagesPerFile || 1;
-      const batesStart = prefix + String(cursor).padStart(pad, '0');
-      const batesEnd   = prefix + String(cursor + filePages - 1).padStart(pad, '0');
+    // Fallback — reconstruct from frontend state when old route is deployed
+    const pagesPerFile = stamped > 0 ? Math.round(totalPages / stamped) : 1;
+    let cursor = start;
+    const files = selectedFiles.slice(0, stamped).map(f => {
+      const filePages  = pagesPerFile || 1;
+      const batesNumber = prefix + String(cursor).padStart(pad, '0');
       cursor += filePages;
-      return { name: f.name, batesStart, batesEnd, pages: filePages, position: 'bottom-left' };
+      return { name: f.name, batesNumber, pages: filePages };
     });
 
     return {
@@ -1203,11 +1201,11 @@ function StampingTool({ onBack }) {
       stampedCount:      stamped,
       totalFiles:        selectedFiles.length,
       totalStampedPages: totalPages,
+      totalInputPages:   totalPages,
     };
   };
 
   const inputStyle = { width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box', color: '#333' };
-
   const optBtn = (val, cur, set, label) => (
     <button key={val} onClick={() => set(val)}
       style={{ padding: '9px 8px', borderRadius: '8px', border: `2px solid ${cur === val ? '#1a3c6e' : '#eee'}`, background: cur === val ? '#eef2ff' : 'white', color: cur === val ? '#1a3c6e' : '#888', fontSize: '12px', fontWeight: cur === val ? '700' : '400', cursor: 'pointer' }}>
@@ -1218,17 +1216,14 @@ function StampingTool({ onBack }) {
   return (
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
-
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 4</span>
         <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>📄 Bates Stamping</h2>
         <span style={{ background: '#f0f4ff', border: '1px solid #c7d2fe', color: '#4338ca', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '700' }}>🤖 AI-Powered</span>
       </div>
-      <p style={{ color: '#aaa', fontSize: '12px', marginBottom: '24px' }}>
-        Upload a folder or pick individual PDFs → AI detects best corner → Stamps every page sequentially
-      </p>
+      <p style={{ color: '#aaa', fontSize: '12px', marginBottom: '24px' }}>Upload a folder or pick individual PDFs → AI detects best corner → Stamps every page sequentially</p>
 
-      {/* Dual upload boxes */}
+      {/* Dual upload */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
           <span style={{ fontSize: '28px' }}>📁</span>
@@ -1244,13 +1239,11 @@ function StampingTool({ onBack }) {
         </label>
       </div>
 
-      {/* File selection list with checkboxes */}
+      {/* Checkbox file list */}
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>
-              📄 Select PDFs ({selectedFiles.length} of {allFiles.length} selected)
-            </label>
+            <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>📄 Select PDFs ({selectedFiles.length} of {allFiles.length} selected)</label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
                 {allChecked ? 'Deselect All' : 'Select All'}
@@ -1265,9 +1258,7 @@ function StampingTool({ onBack }) {
                 <div style={{ width: '18px', height: '18px', borderRadius: '4px', border: `2px solid ${selected[f.name] ? '#1a3c6e' : '#ccc'}`, background: selected[f.name] ? '#1a3c6e' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {selected[f.name] && <span style={{ color: 'white', fontSize: '11px', fontWeight: '700' }}>✓</span>}
                 </div>
-                <span style={{ fontSize: '13px', color: selected[f.name] ? '#1a3c6e' : '#555', fontWeight: selected[f.name] ? '600' : '400', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  📄 {f.name}
-                </span>
+                <span style={{ fontSize: '13px', color: selected[f.name] ? '#1a3c6e' : '#555', fontWeight: selected[f.name] ? '600' : '400', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📄 {f.name}</span>
                 <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0 }}>{(f.size / 1024).toFixed(0)} KB</span>
               </div>
             ))}
@@ -1287,7 +1278,7 @@ function StampingTool({ onBack }) {
         </button>
       </div>
 
-      {/* Prefix & number */}
+      {/* Prefix & numbering */}
       <div style={{ marginBottom: '16px' }}>
         <input type="text" value={prefix} onChange={e => setPrefix(e.target.value)} placeholder="Prefix e.g. DOC-" style={inputStyle} />
       </div>
@@ -1312,7 +1303,6 @@ function StampingTool({ onBack }) {
         style={{ background: 'none', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 16px', color: '#555', fontSize: '12px', cursor: 'pointer', marginBottom: '16px', width: '100%', textAlign: 'left' }}>
         {showAdvanced ? '▲' : '▼'} Advanced Settings
       </button>
-
       {showAdvanced && (
         <div style={{ background: '#f9f9f9', border: '1px solid #eee', borderRadius: '10px', padding: '20px', marginBottom: '20px' }}>
           <div style={{ marginBottom: '16px' }}>
@@ -1337,18 +1327,12 @@ function StampingTool({ onBack }) {
           <div>
             <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#333', fontSize: '13px' }}>Corner Zone: {cornerPct}%</label>
             <input type="range" min="5" max="15" step="1" value={cornerPct} onChange={e => setCornerPct(Number(e.target.value))} style={{ width: '100%', accentColor: '#1a3c6e' }} />
-            <p style={{ color: '#aaa', fontSize: '11px', marginTop: '4px' }}>
-              AI checks the outer {cornerPct}% of each corner for existing content before placing the stamp.
-            </p>
+            <p style={{ color: '#aaa', fontSize: '11px', marginTop: '4px' }}>AI checks the outer {cornerPct}% of each corner for existing content before placing the stamp.</p>
           </div>
         </div>
       )}
 
-      {error && (
-        <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>
-          ❌ {error}
-        </div>
-      )}
+      {error && <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>❌ {error}</div>}
 
       <button onClick={handleSubmit} disabled={processing || selectedFiles.length === 0}
         style={{ width: '100%', background: processing || selectedFiles.length === 0 ? '#ccc' : '#1a3c6e', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: processing || selectedFiles.length === 0 ? 'not-allowed' : 'pointer' }}>
@@ -1395,9 +1379,9 @@ function StampingTool({ onBack }) {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // EXTRACTION TOOL (router)
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 function ExtractionTool({ onBack }) {
   const [activeType, setActiveType] = useState(null);
   if (activeType === 'invoice') return <InvoiceExtractTool onBack={() => setActiveType(null)} />;
@@ -1436,9 +1420,9 @@ function ExtractionTool({ onBack }) {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // INVOICE EXTRACTION TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 function InvoiceExtractTool({ onBack }) {
   const [files, setFiles]           = useState([]);
   const [fields, setFields]         = useState('Invoice Date, Invoice Number, Customer Name, Vendor Name, Amount, Tax, Total Amount, Due Date');
@@ -1470,6 +1454,7 @@ function InvoiceExtractTool({ onBack }) {
     const bytes = Uint8Array.from(atob(excelData), c => c.charCodeAt(0));
     const url   = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     Object.assign(document.createElement('a'), { href: url, download: 'invoice_extraction.xlsx' }).click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -1512,7 +1497,10 @@ function InvoiceExtractTool({ onBack }) {
           </button>
           <QCBadge
             toolName="extraction-invoice"
-            toolOutput={{ invoices: result.invoices || [], summary: { totalFiles: result.totalFiles, successCount: result.successCount, errorCount: result.errorCount } }}
+            toolOutput={{
+              invoices: result.invoices || [],
+              summary:  { totalFiles: result.totalFiles, successCount: result.successCount, errorCount: result.errorCount },
+            }}
             metadata={{ pageCount: result.pageCount }}
           />
         </div>
@@ -1526,9 +1514,9 @@ function InvoiceExtractTool({ onBack }) {
   );
 }
 
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 // BANK STATEMENT EXTRACTION TOOL
-// ==========================================
+// ─────────────────────────────────────────────────────────────
 function BankExtractTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
@@ -1667,9 +1655,14 @@ function BankExtractTool({ onBack }) {
             toolName="extraction-bank"
             toolOutput={result.qcData || {
               statements: (result.summaries || []).map(s => ({
-                file: s.file, openingBalance: s.opening_balance || null, closingBalance: s.closing_balance || null,
-                totalDebits: s.total_debits || null, totalCredits: s.total_credits || null,
-                transactionCount: s.transaction_count || 0, periodStart: null, periodEnd: null,
+                file:             s.file,
+                openingBalance:   s.opening_balance   || null,
+                closingBalance:   s.closing_balance   || null,
+                totalDebits:      s.total_debits      || null,
+                totalCredits:     s.total_credits     || null,
+                transactionCount: s.transaction_count || 0,
+                periodStart:      null,
+                periodEnd:        null,
               })),
               transactions: [], dateGaps: [], amountOutliers: [],
             }}
@@ -1681,9 +1674,9 @@ function BankExtractTool({ onBack }) {
   );
 }
 
-// ==========================================
-// TAX STATEMENT EXTRACTION TOOL — placeholder
-// ==========================================
+// ─────────────────────────────────────────────────────────────
+// TAX STATEMENT EXTRACTION — placeholder
+// ─────────────────────────────────────────────────────────────
 function TaxExtractTool({ onBack }) {
   return (
     <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
