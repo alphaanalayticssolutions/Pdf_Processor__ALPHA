@@ -419,6 +419,18 @@ export async function POST(request) {
           const page        = pages[p];
           const batesNumber = prefix + String(currentNumber + p).padStart(padLength, '0');
           const { x, y }   = getStampCoordinates(stampPosition, page, font, batesNumber, fontSize, cornerPct);
+          // Draw white background box so stamp is always readable over existing content
+          const textWidth  = font.widthOfTextAtSize(batesNumber, fontSize);
+          const padX = 2;
+          const padY = 2;
+          page.drawRectangle({
+            x:      x - padX,
+            y:      y - padY,
+            width:  textWidth + padX * 2,
+            height: fontSize  + padY * 2,
+            color:  rgb(1, 1, 1),
+            opacity: 1,
+          });
           page.drawText(batesNumber, { x, y, size: fontSize, font, color });
         }
 
