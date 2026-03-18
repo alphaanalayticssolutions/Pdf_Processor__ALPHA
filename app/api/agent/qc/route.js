@@ -288,6 +288,48 @@ function runRuleChecks(toolName, toolOutput) {
       }
     });
 
+    // ── RECONCILIATION CHECK ─────────────────────────────────
+    // This is the MOST IMPORTANT check for bank extraction accuracy.
+    //
+    // A dedicated Claude Haiku call reads the PDF summary section
+    // (wherever it appears — Chase calls it "Checking Summary",
+    // others call it "Account Summary", "Transaction Summary" etc.)
+    // and returns the authoritative PDF totals.
+    //
+    // If extracted row sums don't match PDF totals → transaction
+    // amounts were misread (OCR error like $72.88 → $572.88) or
+    // transactions were missed / duplicated.
+    //
+    // Severity: CRITICAL (−25 pts) because wrong amounts make the
+    // entire extraction unusable for financial analysis or litigation.
+    const reconciliation = toolOutput.reconciliation || [];
+    reconciliation.forEach((rec) => {
+      const fmt = (n) => n != null
+        ? `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+        : "?";
+
+      if (rec.pdfDebits != null && !rec.debitsMatch) {
+        const diff = Math.abs(rec.pdfDebits - rec.rowDebits).toFixed(2);
+        findings.push(issue(
+          `${rec.file}: debit total mismatch — PDF shows ${fmt(rec.pdfDebits)} but extracted rows sum to ${fmt(rec.rowDebits)} (off by $${diff}) — one or more transaction amounts may be misread or missing`,
+          SEV.CRITICAL
+        ));
+      }
+      if (rec.pdfCredits != null && !rec.creditsMatch) {
+        const diff = Math.abs(rec.pdfCredits - rec.rowCredits).toFixed(2);
+        findings.push(issue(
+          `${rec.file}: credit total mismatch — PDF shows ${fmt(rec.pdfCredits)} but extracted rows sum to ${fmt(rec.rowCredits)} (off by $${diff}) — transactions may be missing or duplicated`,
+          SEV.CRITICAL
+        ));
+      }
+      if (rec.pdfDebits == null && rec.pdfCredits == null) {
+        findings.push(warning(
+          `${rec.file}: PDF summary totals not found — cannot verify extraction accuracy against source document`,
+          SEV.MINOR
+        ));
+      }
+    });
+
     // Column swap detection
     const swapSuspects = statements.filter(
       (s) => s.totalCredits > 0 && s.totalDebits === 0 && s.transactionCount > 5
