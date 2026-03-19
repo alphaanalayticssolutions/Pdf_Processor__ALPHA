@@ -24,8 +24,12 @@ async function readPDFSummary(base64PDF, fileName) {
           { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64PDF } },
           {
             type: 'text',
-            text: `Read this bank statement PDF and extract summary data.
-Find: Balance Summary, Checking Summary, or Account Summary section.
+            text: `Read this bank statement PDF and extract ONLY from the BALANCE SUMMARY / CHECKING SUMMARY table.
+
+This is the table near the top showing: Beginning Balance, + Deposits and Credits, - Withdrawals and Debits, Ending Balance, Service Charge Fees.
+
+DO NOT read from the Checks Paid section, ATM & Debit Card section, or any transaction detail sections.
+ONLY read the high-level summary categories.
 
 Return ONLY this JSON, nothing else:
 {
@@ -43,13 +47,13 @@ Return ONLY this JSON, nothing else:
 }
 
 Rules:
-- openingBalance: Beginning Balance
-- closingBalance: Ending Balance
-- totalDebits: sum of ALL debit/withdrawal categories INCLUDING service charges and fees
-- totalCredits: sum of ALL credit/deposit categories
-- transactionCount: total number of transactions shown in summary (Instances/Count column)
-- debitCategories: each line item from debits section with label and amount (positive numbers)
-- creditCategories: each line item from credits section
+- openingBalance: Beginning Balance value
+- closingBalance: Ending Balance value
+- totalDebits: sum ALL debit category lines PLUS service charge fees (they are both debits)
+- totalCredits: sum all credit/deposit lines
+- transactionCount: number shown in Instances/Count column next to Ending Balance line (total transactions)
+- debitCategories: ONLY the high-level summary rows e.g. "Checks Paid", "ATM & Debit Card Withdrawals", "Electronic Withdrawals", "Other Withdrawals", "Fees", "Withdrawals and Debits", "Service Charge Fees" — NOT individual check numbers
+- creditCategories: e.g. "Deposits and Additions", "Deposits and Credits"
 - Return ONLY valid JSON, no markdown`
           }
         ]
@@ -181,14 +185,19 @@ function runValidations(pdfSummaries, excelData) {
     const excelCredits = +txs.reduce((s, t) => s + (t.credit || 0), 0).toFixed(2);
     const txCount      = txs.length;
 
-    // Opening/closing from first/last row with data
-    const txsWithBal  = txs.filter(t => t.balance > 0);
-    const firstBal    = txsWithBal[0]?.balance || 0;
-    const lastBal     = txsWithBal[txsWithBal.length - 1]?.balance || 0;
+    // Opening/closing from balance column rows
+    const txsWithBal = txs.filter(t => t.balance > 0);
+    const openBalRow = txs.find(t => t.openBal > 0);
 
-    // Also try openBal/closeBal columns if present
-    const openBalRow  = txs.find(t => t.openBal > 0);
-    const closeBalRow = txs[txs.length - 1];
+    // Reverse-engineer opening balance from first transaction when no openBal column
+    // opening = first_balance + first_debit - first_credit
+    let excelOpen = 0;
+    if (openBalRow?.openBal > 0) {
+      excelOpen = openBalRow.openBal;
+    } else if (txsWithBal.length > 0) {
+      const first = txsWithBal[0];
+      excelOpen = +(first.balance + (first.debit || 0) - (first.credit || 0)).toFixed(2);
+    }
 
     const checks = [];
 
@@ -221,17 +230,17 @@ function runValidations(pdfSummaries, excelData) {
     });
 
     // 3. Opening Balance
-    const excelOpen  = openBalRow?.openBal || firstBal || 0;
-    const openDiff   = pdf.openingBalance != null && excelOpen > 0
+    const openDiff = pdf.openingBalance != null && excelOpen > 0
       ? +Math.abs(pdf.openingBalance - excelOpen).toFixed(2) : null;
     checks.push({
       type:     'Opening Balance Match',
       status:   openDiff === null ? 'warn' : openDiff < 1 ? 'pass' : 'fail',
       pdfVal:   pdf.openingBalance != null ? `$${pdf.openingBalance.toFixed(2)}` : 'N/A',
-      excelVal: excelOpen > 0 ? `$${excelOpen.toFixed(2)}` : 'Not found',
+      excelVal: excelOpen > 0 ? `$${excelOpen.toFixed(2)}` : 'Not found in Excel',
       diff:     openDiff != null ? `$${openDiff.toFixed(2)}` : null,
-      detail:   openDiff === null ? 'Cannot verify — balance column not found' :
-                openDiff < 1     ? 'Match ✓' : `Mismatch $${openDiff.toFixed(2)}`,
+      detail:   openDiff === null ? 'Opening balance column not in Excel — verify manually' :
+                openDiff < 1     ? 'Match ✓' :
+                `Mismatch $${openDiff.toFixed(2)} — reverse-engineered from first transaction balance`,
     });
 
     // 4. Closing Balance — math check
@@ -336,10 +345,22 @@ function runValidations(pdfSummaries, excelData) {
     });
 
     // Category-level breakdown
+    // Only match SUMMARY-level categories (e.g. "Checks Paid", "ATM & Debit Card")
+    // Skip individual check entries like "CHECK 1001", "CHECK 1002" etc.
     const categoryChecks = [];
     if (pdf.debitCategories?.length > 0) {
       pdf.debitCategories.forEach((cat) => {
         const label = (cat.label || '').toLowerCase();
+
+        // Skip individual check entries — these are transaction-level, not summary-level
+        // Pattern: "CHECK 1001", "Check #1234", "1234 ^", numbered checks etc.
+        const isIndividualCheck = /^check\s*#?\s*\d+/i.test(cat.label) ||
+                                   /^\d{3,6}\s*[\*\^]?$/.test(cat.label.trim());
+        if (isIndividualCheck) return;
+
+        // Also skip if amount is very small relative to likely category totals
+        // (individual items rarely appear in Balance Summary)
+
         let extracted = 0;
         if (label.includes('check')) {
           extracted = txs.filter(t => t.checkNo).reduce((s, t) => s + t.debit, 0);
@@ -347,11 +368,17 @@ function runValidations(pdfSummaries, excelData) {
           extracted = txs.filter(t => !t.checkNo && /card purchase|atm|non-chase atm|recurring card/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
         } else if (label.includes('electronic') || label.includes('transfer')) {
           extracted = txs.filter(t => !t.checkNo && !/card purchase|atm|non-chase atm|fee|maintenance|owner withdrawal/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
-        } else if (label.includes('fee') || label.includes('charge') || label.includes('service')) {
+        } else if (label.includes('fee') || label.includes('charge') || label.includes('service') || label.includes('maintenance')) {
           extracted = txs.filter(t => /fee|maintenance|service charge/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
+        } else if (label.includes('other withdrawal')) {
+          extracted = txs.filter(t => /owner withdrawal|cash withdrawal/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
         } else if (label.includes('withdrawal') || label.includes('debit')) {
+          // Catch-all "Withdrawals and Debits" — compare against ALL debits
           extracted = txs.reduce((s, t) => s + t.debit, 0);
+        } else {
+          return; // unknown category — skip
         }
+
         const diff = +Math.abs(cat.amount - extracted).toFixed(2);
         if (diff > 1) {
           categoryChecks.push({ label: cat.label, pdfAmount: cat.amount, extracted: +extracted.toFixed(2), diff });
