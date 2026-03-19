@@ -1591,15 +1591,24 @@ function QCBankExtractionTool({ onBack }) {
       {report && (
         <div style={{ marginTop: '24px' }}>
           {/* Overall summary */}
-          <div style={{ background: riskBg(report.overallRisk), border: `2px solid ${riskColor(report.overallRisk)}`, borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <div>
-                <span style={{ fontSize: '22px', marginRight: '8px' }}>{riskIcon(report.overallRisk)}</span>
-                <span style={{ fontWeight: '800', fontSize: '18px', color: riskColor(report.overallRisk) }}>{riskLabel(report.overallRisk)}</span>
+          <div style={{ background: riskBg(report.overallRisk), border: `2px solid ${riskColor(report.overallRisk)}`, borderRadius: '12px', padding: '20px 24px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+              {/* Score circle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <div style={{ width: '72px', height: '72px', borderRadius: '50%', background: 'white', border: `3px solid ${riskColor(report.overallRisk)}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: '22px', fontWeight: '900', color: riskColor(report.overallRisk), lineHeight: 1 }}>{report.overallScore ?? 100}%</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#888', fontWeight: '600', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '4px' }}>QC Score</div>
+                  <div style={{ fontSize: '18px', fontWeight: '800', color: riskColor(report.overallRisk) }}>{riskIcon(report.overallRisk)} {riskLabel(report.overallRisk)}</div>
+                </div>
               </div>
+              {/* Stats */}
               <div style={{ textAlign: 'right', fontSize: '12px', color: '#555' }}>
-                <div>{report.totalPDFs} PDF(s) | {report.totalExcels} Excel(s) | {report.totalRows} rows</div>
-                <div style={{ color: report.totalFails > 0 ? '#dc2626' : '#16a34a', fontWeight: '700' }}>{report.totalFails} fail(s) · {report.totalWarns} warning(s)</div>
+                <div style={{ marginBottom: '4px' }}>{report.totalPDFs} PDF(s) · {report.totalExcels} Excel(s) · {report.totalRows} rows</div>
+                <div style={{ color: report.totalFails > 0 ? '#dc2626' : '#16a34a', fontWeight: '700', fontSize: '13px' }}>
+                  {report.totalFails} fail(s) · {report.totalWarns} warning(s)
+                </div>
               </div>
             </div>
           </div>
@@ -1614,6 +1623,9 @@ function QCBankExtractionTool({ onBack }) {
                   <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{res.bankName} • {res.accountHolder} • {res.statementPeriod} • {res.transactionRows} rows</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ background: 'white', color: riskColor(res.riskLevel), border: `2px solid ${riskColor(res.riskLevel)}`, borderRadius: '20px', padding: '3px 12px', fontSize: '13px', fontWeight: '900' }}>
+                    {res.score ?? '—'}%
+                  </span>
                   <span style={{ background: riskBg(res.riskLevel), color: riskColor(res.riskLevel), border: `1px solid ${riskColor(res.riskLevel)}`, borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>
                     {riskIcon(res.riskLevel)} {res.riskLevel.toUpperCase()}
                   </span>

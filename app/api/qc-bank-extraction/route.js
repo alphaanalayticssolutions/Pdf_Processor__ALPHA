@@ -420,6 +420,7 @@ function runValidations(pdfSummaries, excelData) {
     const failCount = checks.filter(c => c.status === 'fail').length;
     const warnCount = checks.filter(c => c.status === 'warn').length;
     const riskLevel = failCount >= 2 ? 'high' : failCount === 1 ? 'medium' : warnCount > 2 ? 'medium' : 'low';
+    const score = Math.max(0, Math.min(100, Math.round(100 - (failCount * 10) - (warnCount * 3))));
 
     // Insights
     const insights = [];
@@ -456,6 +457,7 @@ function runValidations(pdfSummaries, excelData) {
       txIssues,
       patterns,
       riskLevel,
+      score,
       insights,
       recommendations: recs,
     });
@@ -503,7 +505,11 @@ export async function POST(request) {
     // Overall summary
     const totalFails = reportResults.flatMap(r => r.checks).filter(c => c.status === 'fail').length;
     const totalWarns = reportResults.flatMap(r => r.checks).filter(c => c.status === 'warn').length;
+    const totalChecks = reportResults.flatMap(r => r.checks).length;
     const overallRisk = totalFails >= 3 ? 'high' : totalFails >= 1 ? 'medium' : totalWarns > 3 ? 'medium' : 'low';
+
+    // Compute overall score: each fail = -10pts, each warn = -3pts, base 100
+    const overallScore = Math.max(0, Math.min(100, Math.round(100 - (totalFails * 10) - (totalWarns * 3))));
 
     return Response.json({
       success:      true,
@@ -511,6 +517,7 @@ export async function POST(request) {
       totalExcels:  excelFiles.length,
       totalRows:    allTransactions.length,
       overallRisk,
+      overallScore,
       totalFails,
       totalWarns,
       results:      reportResults,
