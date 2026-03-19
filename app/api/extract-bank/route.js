@@ -1,676 +1,469 @@
-// /app/api/agent/qc/route.js
-
-import Anthropic from "@anthropic-ai/sdk";
-import { NextResponse } from "next/server";
-
 export const maxDuration = 300;
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
-const client = new Anthropic();
+import Anthropic from '@anthropic-ai/sdk';
+import ExcelJS from 'exceljs';
 
-const SEV = {
-  CRITICAL: { label: "Critical", deduct: 25 },
-  MAJOR:    { label: "Major",    deduct: 10 },
-  MINOR:    { label: "Minor",    deduct: 3  },
-};
-function issue(msg, sev = SEV.MAJOR)   { return { msg, sev, type: "issue" }; }
-function warning(msg, sev = SEV.MINOR) { return { msg, sev, type: "warning" }; }
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const TOOL_CONFIG = {
-  "extraction-bank":      { ruleWeight: 0.70, aiWeight: 0.30, cap: 40, passAt: 88 },
-  "extraction-invoice":   { ruleWeight: 0.70, aiWeight: 0.30, cap: 40, passAt: 88 },
-  "transaction-analysis": { ruleWeight: 0.65, aiWeight: 0.35, cap: 40, passAt: 88 },
-  "tracker":              { ruleWeight: 0.65, aiWeight: 0.35, cap: 35, passAt: 88 },
-  "categorisation":       { ruleWeight: 0.40, aiWeight: 0.60, cap: 35, passAt: 88 },
-  "bates-stamp":          { ruleWeight: 0.75, aiWeight: 0.25, cap: 45, passAt: 92 },
-  "splitter":             { ruleWeight: 0.65, aiWeight: 0.35, cap: 35, passAt: 88 },
-  "desc-categoriser":     { ruleWeight: 0.40, aiWeight: 0.60, cap: 30, passAt: 88 },
-};
-
-const DOMAIN_PROMPTS = {
-  "extraction-bank": `
-You are a forensic accountant with 20 years supporting financial fraud litigation.
-
-OCR errors easy to miss:
-- "7" misread as "1": $7,500 → $1,500
-- Comma misread as decimal: $1,234 → $1.234
-- Running balance printed as a transaction — shows as massive credit
-- Redacted account numbers in description — transaction may have been silently skipped
-- Amount column physically blacked out — transaction extracted with $0 amount
-
-Fraud patterns (flag for attorney review, not accusation):
-- Round-dollar transfers just below $10K reporting thresholds (structuring)
-- Daily ATM withdrawals at maximum limit for consecutive days
-- Large deposits followed immediately by large transfers out (pass-through)
-- Same vendor paid multiple times in a short window
-
-Statement integrity:
-- Closing balance of Jan MUST equal opening balance of Feb
-- Gaps > 10 days in active business account = likely missing pages
-`,
-  "extraction-invoice": `
-You are an AP fraud auditor who has investigated invoice fraud at 50+ companies.
-Invoice fraud patterns:
-- Sequential invoice numbers from same vendor within days
-- Amounts just below approval thresholds
-- Invoice date on a weekend or holiday for a B2B vendor
-- Due date before invoice date — impossible
-`,
-  "transaction-analysis": `
-You are a financial forensics analyst building pivot analyses for litigation.
-Context before flagging:
-- AmEx and credit card accounts often start mid-period — this is NOT dormancy
-- External payments will not have counterparts in the dataset — this is expected
-- Only flag unmatched transfers if the counterparty SHOULD be in the dataset
-`,
-  "tracker": `
-You are a legal discovery compliance specialist.
-Gap patterns:
-- Single missing month = one PDF not uploaded
-- 3+ consecutive missing = full quarter missing
-- All accounts missing same month = that folder never processed
-`,
-  "categorisation": `
-You are a senior paralegal who has organized 500+ legal document productions.
-HARD RULES:
-- Bank statements in Court Filings folder = wrong
-- Contracts in Bank Statements folder = wrong
-- Attorney letters in any non-Correspondence folder = privilege risk
-`,
-  "bates-stamp": `
-You are a litigation support director.
-NON-NEGOTIABLE:
-- Any gap in sequence = document may have been withheld
-- Gap of 1 is MORE suspicious than gap of 100 — looks intentional
-- Duplicate numbers = corrupts entire production
-`,
-  "splitter": `
-You are a document processing specialist.
-Watch for:
-- One split with 80% of pages = split point was missed
-- All splits same page count = AI split on count not content
-- Total pages across splits ≠ total input pages = pages lost
-`,
-  "desc-categoriser": `
-You are a forensic accountant categorizing business transactions.
-HIGH-STAKES ERRORS:
-- WIRE TRANSFER → Utilities = hides fund movements
-- ADP/PAYCHEX/GUSTO → not Payroll = understates labor costs
-- LOAN PAYMENT → Transfer = hides debt obligations
-`,
-};
-
-function isValidDate(d) { if (!d) return false; return !isNaN(new Date(d).getTime()); }
-function isFutureDate(d) { if (!d) return false; return new Date(d) > new Date(); }
-
-// ─────────────────────────────────────────────────────────────
-// RULE CHECKS
-// ─────────────────────────────────────────────────────────────
-function runRuleChecks(toolName, toolOutput) {
-  const findings = [];
-
-  if (toolName === "extraction-bank") {
-    const statements      = toolOutput.statements   || [];
-    const allTransactions = toolOutput.transactions || [];
-
-    if (statements.length === 0 && allTransactions.length === 0) {
-      findings.push(issue("No data returned — extraction may have failed silently", SEV.CRITICAL));
-      return findings;
-    }
-
-    // Balance math per statement
-    statements.forEach((stmt) => {
-      const { file, openingBalance, closingBalance, totalDebits, totalCredits } = stmt;
-      if (openingBalance == null || closingBalance == null) {
-        findings.push(warning(`${file}: opening or closing balance missing`, SEV.MAJOR));
-        return;
-      }
-      const expected = +(openingBalance + totalCredits - totalDebits).toFixed(2);
-      const diff     = Math.abs(expected - closingBalance);
-      if (diff > 1) {
-        findings.push(issue(`${file}: balance mismatch — expected $${expected.toFixed(2)}, got $${closingBalance.toFixed(2)} (off by $${diff.toFixed(2)})`, SEV.CRITICAL));
-      } else if (diff > 0.01) {
-        findings.push(warning(`${file}: rounding difference $${diff.toFixed(2)} — verify cents`, SEV.MINOR));
-      }
-    });
-
-    // Cross-statement continuity
-    const sorted = [...statements].sort((a, b) => new Date(a.periodStart) - new Date(b.periodStart));
-    for (let i = 1; i < sorted.length; i++) {
-      const prev = sorted[i-1], curr = sorted[i];
-      if (prev.closingBalance != null && curr.openingBalance != null) {
-        const gap = Math.abs(prev.closingBalance - curr.openingBalance);
-        if (gap > 1) findings.push(issue(`Balance gap: ${prev.file} closes $${prev.closingBalance.toFixed(2)} but ${curr.file} opens $${curr.openingBalance.toFixed(2)} — $${gap.toFixed(2)} unaccounted`, SEV.CRITICAL));
-      }
-    }
-
-    // Running balance errors — only when math fails
-    const badMathSet = new Set(
-      statements.filter((s) => {
-        if (s.openingBalance == null || s.closingBalance == null || s.totalDebits == null || s.totalCredits == null) return false;
-        return Math.abs(s.openingBalance + s.totalCredits - s.totalDebits - s.closingBalance) > 1;
-      }).map((s) => s.file)
-    );
-    (toolOutput.runningBalanceErrors || []).forEach((e) => {
-      if (badMathSet.has(e.file)) findings.push(issue(`${e.file} row ${e.row}: running balance error — expected $${e.expected}, found $${e.found}`, SEV.MAJOR));
-    });
-
-    // Column swap
-    const swapSuspects = statements.filter((s) => s.totalCredits > 0 && s.totalDebits === 0 && s.transactionCount > 5);
-    if (swapSuspects.length > 0) findings.push(issue(`${swapSuspects.map(s => s.file).join(", ")}: credits present but zero debits — possible column swap`, SEV.MAJOR));
-
-    // Date gaps
-    (toolOutput.dateGaps || []).forEach((g) => findings.push(warning(`${g.file}: ${g.dayGap}-day gap (${g.from} → ${g.to}) — verify no missing pages`, SEV.MINOR)));
-
-    // Invalid dates
-    const invalidDates = allTransactions.filter((t) => t.date && !isValidDate(t.date));
-    if (invalidDates.length > 0) findings.push(issue(`${invalidDates.length} transaction(s) have invalid dates`, SEV.MAJOR));
-
-    // Amount outliers — debit only, no checks (already filtered in buildBankQcData)
-    (toolOutput.amountOutliers || []).forEach((o) => findings.push(warning(`${o.file}: debit $${o.amount} on ${o.date} is ${o.times}× the median — possible OCR error (extra zero?)`, SEV.MINOR)));
-
-    // Missing descriptions
-    const missingDesc = allTransactions.filter((t) => !t.description?.trim()).length;
-    if (missingDesc > 0) findings.push(warning(`${missingDesc} transaction(s) have no description`, SEV.MINOR));
-
-    // Duplicates
-    const seen = new Map(); let dupes = 0;
-    allTransactions.forEach((t) => {
-      const key = `${t.date}-${t.debit}-${t.credit}-${t.description?.trim()}`;
-      if (seen.has(key)) dupes++; else seen.set(key, true);
-    });
-    if (dupes > 0) findings.push(warning(`${dupes} possible duplicate transaction(s) — same date, amount, description`, SEV.MINOR));
+// ── Repair truncated JSON ────────────────────────────────────
+function repairJSON(text) {
+  text = text.trim();
+  text = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  try { JSON.parse(text); return text; } catch (e) {}
+  const txArrayStart = text.indexOf('"transactions"');
+  if (txArrayStart === -1) return text;
+  let lastSafeClose = -1, depth = 0, inString = false, escape = false;
+  for (let i = txArrayStart; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    if (ch === '}') { depth--; if (depth === 1) lastSafeClose = i; }
   }
-
-  if (toolName === "extraction-invoice") {
-    const invoices = toolOutput.invoices || [], summary = toolOutput.summary || {};
-    if (invoices.length === 0) { findings.push(issue("No invoices extracted", SEV.CRITICAL)); return findings; }
-    let taxErrors = 0;
-    invoices.forEach((inv) => { if (inv.subtotal != null && inv.tax != null && inv.total != null && Math.abs(inv.subtotal + inv.tax - inv.total) > 0.05) taxErrors++; });
-    if (taxErrors > 0) findings.push(issue(`${taxErrors} invoice(s): subtotal + tax ≠ total`, SEV.MAJOR));
-    const invoiceNums = invoices.map((i) => i.invoiceNumber).filter(Boolean);
-    if (new Set(invoiceNums).size < invoiceNums.length) findings.push(issue(`${invoiceNums.length - new Set(invoiceNums).size} duplicate invoice number(s)`, SEV.MAJOR));
-    const futureDated = invoices.filter((inv) => inv.invoiceDate && isFutureDate(inv.invoiceDate));
-    if (futureDated.length > 0) findings.push(issue(`${futureDated.length} invoice(s) are future-dated`, SEV.MAJOR));
-    const invalidDates = invoices.filter((inv) => inv.invoiceDate && !isValidDate(inv.invoiceDate));
-    if (invalidDates.length > 0) findings.push(issue(`${invalidDates.length} invoice(s) have invalid dates`, SEV.MAJOR));
-    const amounts = invoices.map((i) => i.total).filter((a) => a > 0).sort((a, b) => a - b);
-    if (amounts.length > 3) { const median = amounts[Math.floor(amounts.length/2)]; const outliers = amounts.filter((a) => a > median*50 || a < median/50); if (outliers.length > 0) findings.push(warning(`${outliers.length} invoice amount(s) extreme outliers vs median $${median.toFixed(2)}`, SEV.MINOR)); }
-    if (invoices.filter((i) => i.total == null).length > 0) findings.push(issue(`${invoices.filter((i) => i.total==null).length} invoice(s) missing total`, SEV.MAJOR));
-    if (invoices.filter((i) => !i.vendorName?.trim()).length > 0) findings.push(warning(`${invoices.filter((i) => !i.vendorName?.trim()).length} invoice(s) missing vendor name`, SEV.MINOR));
-    const failRate = ((summary.errorCount||0)/(summary.totalFiles||1))*100;
-    if (failRate > 20) findings.push(issue(`${failRate.toFixed(0)}% of invoices failed extraction`, SEV.MAJOR));
-    else if (failRate > 5) findings.push(warning(`${failRate.toFixed(0)}% of invoices failed extraction`, SEV.MINOR));
+  if (lastSafeClose !== -1) {
+    let repaired = text.substring(0, lastSafeClose + 1) + ']}';
+    try { JSON.parse(repaired); return repaired; } catch (e) {}
+    repaired = repaired + '}';
+    try { JSON.parse(repaired); return repaired; } catch (e) {}
   }
-
-  if (toolName === "transaction-analysis") {
-    const accounts = toolOutput.accounts||[], flaggedTransfers = toolOutput.flaggedTransfers||[], fileCount = toolOutput.fileCount||0;
-    if (fileCount === 0) { findings.push(issue("No files processed", SEV.CRITICAL)); return findings; }
-    accounts.forEach((acc) => {
-      if (!acc.monthlyData?.length) return;
-      const counts = acc.monthlyData.map((m) => m.count).filter((c) => c > 0);
-      if (counts.length > 2) { const avg = counts.reduce((s,c)=>s+c,0)/counts.length; acc.monthlyData.filter((m)=>m.count>avg*5).forEach((s)=>findings.push(warning(`"${acc.name}": ${s.month} has ${s.count} tx vs avg ${avg.toFixed(0)} — spike`, SEV.MINOR))); }
-      const nonZeroIdx = acc.monthlyData.map((m,i)=>(m.count>0?i:-1)).filter((i)=>i!==-1);
-      if (nonZeroIdx.length >= 2) {
-        const first = nonZeroIdx[0], last = nonZeroIdx[nonZeroIdx.length-1];
-        const mid = acc.monthlyData.slice(first, last+1);
-        let gapRun=0, longest=0;
-        mid.forEach((m)=>{ if(m.count===0){gapRun++;if(gapRun>longest)longest=gapRun;}else gapRun=0; });
-        if (longest >= 6) findings.push(warning(`"${acc.name}": ${longest} zero-activity months mid-period`, SEV.MINOR));
-        const gaps = mid.filter((m)=>m.count===0).map((m)=>m.month);
-        if (gaps.length > 0 && gaps.length < 6) findings.push(warning(`"${acc.name}": no activity in ${gaps.slice(0,6).join(", ")} — missing statements?`, SEV.MINOR));
-      }
-    });
-    if (flaggedTransfers.length > 0) findings.push(warning(`${flaggedTransfers.length} outgoing transfer(s) unmatched — likely external payments`, SEV.MINOR));
-    const totalTx = accounts.reduce((s,a)=>s+(a.totalTransactions||0),0);
-    if (fileCount > 0 && totalTx < fileCount*5) findings.push(warning(`Only ${totalTx} total transactions across ${fileCount} files — verify input`, SEV.MINOR));
-  }
-
-  if (toolName === "tracker") {
-    const gaps=toolOutput.gaps||0, totalMonths=toolOutput.totalMonths||0, totalAccounts=(toolOutput.totalBankAccounts||0)+(toolOutput.totalCreditCards||0);
-    const missingMonths=toolOutput.missingMonths||[], duplicateAccounts=toolOutput.duplicateAccounts||[];
-    if (totalAccounts===0){findings.push(issue("No accounts found in tracker",SEV.CRITICAL));return findings;}
-    if (totalMonths===0){findings.push(issue("Tracker has no months of data",SEV.CRITICAL));return findings;}
-    const gapRate=(gaps/totalMonths)*100;
-    if (gapRate>30) findings.push(issue(`High gap rate: ${gaps}/${totalMonths} months missing (${gapRate.toFixed(0)}%)`,SEV.MAJOR));
-    else if (gaps>0) findings.push(warning(missingMonths.length>0?`Missing: ${missingMonths.slice(0,6).join(", ")}${missingMonths.length>6?` +${missingMonths.length-6} more`:""}`:`${gaps} gap(s) in tracker`,SEV.MINOR));
-    if (duplicateAccounts.length>0) findings.push(warning(`Possible duplicate accounts: ${duplicateAccounts.join(", ")}`,SEV.MINOR));
-    if (totalMonths<3) findings.push(warning(`Only ${totalMonths} months covered`,SEV.MINOR));
-  }
-
-  if (toolName === "categorisation") {
-    const files=toolOutput.files||[];
-    if (files.length===0){findings.push(issue("No files categorised",SEV.CRITICAL));return findings;}
-    const normalized=files.map((f)=>({...f,confidenceFloat:typeof f.confidence==="string"?f.confidence==="HIGH"?0.9:f.confidence==="MEDIUM"?0.5:0.2:(f.confidence??0.5)}));
-    const bankWrong=files.filter((f)=>f.file?.toLowerCase().includes("bank")&&f.folder&&!f.folder.toLowerCase().includes("bank"));
-    if (bankWrong.length>0) findings.push(issue(`${bankWrong.length} file(s) with "bank" in name outside Bank Statements folder`,SEV.CRITICAL));
-    (toolOutput.semanticMismatches||[]).forEach((m)=>findings.push(warning(`"${m.file}" → ${m.folder} but name suggests ${m.suggestedFolder}`,SEV.MINOR)));
-    const lowPct=(normalized.filter((f)=>f.confidenceFloat<0.5).length/files.length)*100;
-    if (lowPct>25) findings.push(issue(`${lowPct.toFixed(0)}% low confidence`,SEV.MAJOR)); else if (lowPct>10) findings.push(warning(`${lowPct.toFixed(0)}% low confidence`,SEV.MINOR));
-    if (normalized.every((f)=>f.confidenceFloat>=0.9)&&files.length>20) findings.push(warning(`All ${files.length} files HIGH confidence — spot-check manually`,SEV.MINOR));
-    const miscPct=(files.filter((f)=>f.folder?.toLowerCase().includes("miscellaneous")).length/files.length)*100;
-    if (miscPct>15) findings.push(issue(`${miscPct.toFixed(0)}% in Miscellaneous`,SEV.MAJOR)); else if (miscPct>5) findings.push(warning(`${miscPct.toFixed(0)}% in Miscellaneous`,SEV.MINOR));
-    const noFolder=files.filter((f)=>!f.folder?.trim()).length;
-    if (noFolder>0) findings.push(issue(`${noFolder} file(s) have no folder assigned`,SEV.MAJOR));
-  }
-
-  if (toolName === "bates-stamp") {
-    const files=toolOutput.files||[], stampedCount=toolOutput.stampedCount||0, totalFiles=toolOutput.totalFiles||files.length;
-    const totalInputPages=toolOutput.totalInputPages||0, totalStampedPages=toolOutput.totalStampedPages||0;
-    if (totalFiles>0&&stampedCount<totalFiles) findings.push(issue(`${totalFiles-stampedCount}/${totalFiles} files not stamped`,SEV.MAJOR));
-    const batesNums=files.map((f)=>f.batesNumber||f.startBates).filter(Boolean);
-    if (new Set(batesNums).size<batesNums.length) findings.push(issue("Duplicate Bates numbers — do not produce",SEV.CRITICAL));
-    const nums=batesNums.map((b)=>parseInt(b.replace(/\D/g,""),10)).filter((n)=>!isNaN(n)).sort((a,b)=>a-b);
-    const gapsFound=[];
-    for (let i=1;i<nums.length;i++) if(nums[i]-nums[i-1]>1) gapsFound.push({from:nums[i-1],to:nums[i],size:nums[i]-nums[i-1]-1});
-    if (gapsFound.length>0){const worst=gapsFound.sort((a,b)=>a.size-b.size)[0];findings.push(issue(`Bates gap(s): ${gapsFound.slice(0,3).map((g)=>`${g.from}→${g.to}`).join(", ")}${worst.size===1?" (gap of 1 — looks intentional)":""}`,worst.size===1?SEV.CRITICAL:SEV.MAJOR));}
-    const prefixes=[...new Set(batesNums.map((b)=>b.replace(/\d+$/,"")))];
-    if (prefixes.length>1) findings.push(issue(`Inconsistent Bates prefix: ${prefixes.join(", ")}`,SEV.MAJOR));
-    if (totalInputPages>0&&totalStampedPages>0&&totalStampedPages!==totalInputPages) findings.push(issue(`Page count mismatch: ${totalStampedPages} stamped vs ${totalInputPages} input`,SEV.MAJOR));
-    const zeroPage=files.filter((f)=>(f.pages||f.pageCount||0)===0).length;
-    if (zeroPage>0) findings.push(warning(`${zeroPage} stamped file(s) have 0 pages`,SEV.MINOR));
-  }
-
-  if (toolName === "splitter") {
-    const splits=toolOutput.splits||[], totalPages=toolOutput.totalPages||0;
-    if (splits.length===0){findings.push(issue("No splits produced",SEV.CRITICAL));return findings;}
-    const splitTotal=splits.reduce((s,sp)=>s+(sp.pageCount||sp.pages||0),0);
-    if (totalPages>0&&Math.abs(splitTotal-totalPages)>2) findings.push(issue(`Page mismatch: ${splitTotal} of ${totalPages} pages accounted for`,SEV.MAJOR));
-    const unnamed=splits.filter((s)=>!s.name?.trim()).length;
-    if (unnamed>0) findings.push(warning(`${unnamed} split(s) have no name`,SEV.MINOR));
-    const generic=splits.filter((s)=>/^(document|part|file|split)[_\s\d]+$/i.test(s.name?.trim()||"")).length;
-    if (generic>splits.length*0.5) findings.push(warning(`${generic} splits have generic names`,SEV.MINOR));
-    if (splits.length>1&&splitTotal>0){const maxPages=Math.max(...splits.map((s)=>s.pageCount||s.pages||0));if((maxPages/splitTotal)*100>75){const big=splits.find((s)=>(s.pageCount||s.pages||0)===maxPages);findings.push(warning(`"${big?.name}" has ${((maxPages/splitTotal)*100).toFixed(0)}% of pages — unbalanced`,SEV.MINOR));}}
-    if (splits.filter((s)=>(s.pageCount||s.pages||0)===0).length>0) findings.push(issue(`${splits.filter((s)=>(s.pageCount||s.pages||0)===0).length} split(s) have 0 pages`,SEV.MAJOR));
-  }
-
-  if (toolName === "desc-categoriser") {
-    const descriptions=toolOutput.descriptions||[], total=descriptions.length;
-    if (total===0){findings.push(issue("No descriptions found",SEV.CRITICAL));return findings;}
-    const uncategorised=descriptions.filter((d)=>!d.category?.trim()||["uncategorised","uncategorized","other","unknown"].includes(d.category.toLowerCase())).length;
-    if ((uncategorised/total)*100>15) findings.push(warning(`${((uncategorised/total)*100).toFixed(0)}% uncategorised`,SEV.MINOR));
-    const freqMap={};
-    descriptions.forEach((d)=>{const key=d.description?.toLowerCase().trim();if(!key)return;if(!freqMap[key])freqMap[key]={cats:new Set(),count:0};freqMap[key].cats.add(d.category);freqMap[key].count++;});
-    const inconsistent=Object.entries(freqMap).filter(([,v])=>v.count>3&&v.cats.size>1);
-    if (inconsistent.length>0) findings.push(warning(`${inconsistent.length} description(s) with inconsistent categories`,SEV.MINOR));
-    (toolOutput.semanticMismatches||[]).forEach((m)=>findings.push(warning(`"${m.description}" → "${m.assigned}" but likely "${m.expected}"`,SEV.MINOR)));
-    const lowConf=descriptions.filter((d)=>d.confidence!=null&&d.confidence<0.4).length;
-    if (lowConf>0) findings.push(warning(`${lowConf} description(s) very low confidence`,SEV.MINOR));
-  }
-
-  return findings;
+  return text;
 }
 
-// ─────────────────────────────────────────────────────────────
-// FACTS SUMMARY
-// ─────────────────────────────────────────────────────────────
-function buildFactsSummary(toolName, toolOutput) {
+// ── Extraction prompt ────────────────────────────────────────
+const PROMPT = `You are a bank statement data extraction engine. Extract ALL transactions from this PDF and return ONLY a valid minified JSON object — no explanation, no markdown, no extra text, no indentation.
+
+DETECT DOCUMENT TYPE FIRST:
+- Only return an error if the document is GENUINELY not a bank statement at all (e.g. a lease agreement, loan invoice, tax form, utility bill, insurance policy).
+- A bank statement with only 1 or 2 transactions is VALID — extract it normally.
+- A bank statement that says "No activity this statement period" is VALID — return empty transactions array [].
+- NEVER return NOT_A_BANK_STATEMENT for a real bank or credit card statement.
+- Only if genuinely NOT a bank statement: {"error":"NOT_A_BANK_STATEMENT","document_type":"describe what it is"}
+
+ACCOUNT INFO:
+- Extract bank name, account holder name, account number last 4-5 digits, statement period, opening balance, closing balance.
+- Do NOT extract summary totals — totals are computed by summing extracted transactions.
+
+EXTRACT TRANSACTIONS from ALL pages: Deposits/Credits, Checks Paid, Electronic Withdrawals, ATM Withdrawals, Fees, Refunds, Card Purchases.
+
+IGNORE: Daily balance rows, beginning/ending balance summary lines, page headers/footers, overdraft disclosures.
+
+LAYOUT: Handle any column order. Merge multi-line transactions into one row. Infer year from statement period.
+- Amounts in parentheses (123.45) = Debit
+- Negative amounts -123.45 = Debit
+
+PARTIALLY OBSCURED OR REDACTED LINES — CRITICAL:
+Some PDF lines have redacted account numbers shown as dark boxes, blacked-out segments, or asterisks.
+- NEVER skip a transaction because its account number or part of its description is redacted.
+- Extract using whatever IS visible: date, amount, Transaction#, any readable description text.
+- For description, use visible text and replace redacted part with "..." (e.g. "Online Transfer To Chk ... Transaction#: 7649952501").
+- The Transaction# is usually fully readable even when account number is obscured — always include it.
+- If the AMOUNT is also redacted/unreadable, still include the transaction row with debit: 0 and note in description "amount redacted". NEVER guess or infer the amount from nearby values — use exactly 0.
+- A transaction with partial description or zero amount is VALID and must be included.
+
+RUNNING BALANCE: Use the statement's own printed running balance column if available. If not available, calculate cumulative balance after each transaction.
+
+CRITICAL — NEVER CONFUSE BALANCE WITH AMOUNT:
+Bank statements have two separate columns: AMOUNT (the transaction value) and BALANCE/RUNNING BALANCE (the account total after the transaction).
+- The AMOUNT column is what you extract as debit or credit
+- The BALANCE column is what you extract as running_balance
+- NEVER put a balance value into the debit or credit field
+- A value like $115,069.70 that equals approximately the account balance is a RUNNING BALANCE — not a transaction amount
+- If you see a large round number that matches the approximate account balance, it is the balance column, NOT a deposit or withdrawal
+- Transaction amounts are typically smaller than the account balance
+
+CRITICAL — NO DUPLICATE TRANSACTIONS:
+De-duplication rules:
+1. CHECK NUMBERS: Each check number appears only ONCE.
+2. TRANSACTION IDs: Each Transaction# is unique — never include the same Transaction# twice.
+3. SAME DATE + AMOUNT + DESCRIPTION: Identical rows = duplicate — include only one.
+4. SECTION TOTALS: Lines like "Total Checks Paid $239,816.80" are summary lines — never include.
+5. SELF-CHECK: Before returning, scan for (a) duplicate check numbers, (b) duplicate Transaction# IDs, (c) identical date+amount+description pairs. Remove duplicates.
+
+OUTPUT — return ONLY this minified JSON:
+{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022"}]}
+
+For statements with no transactions:
+{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[]}
+
+STRICT RULES:
+- Minified JSON only — no indentation, no extra whitespace
+- description: max 80 characters
+- debit/credit: positive number or 0
+- type: exactly "Credit" or "Debit"
+- check_number: "" if not applicable
+- Include ALL transactions from ALL pages — do NOT skip any
+- Do NOT include balance summary rows as transactions
+- NEVER duplicate any transaction
+- Unreadable values: 0 for numbers, "" for strings
+- Return ONLY the JSON, nothing else`;
+
+// ── AI Reconciliation ────────────────────────────────────────
+async function runAIReconciliation(base64PDF, fileName, rowDebits, rowCredits) {
   try {
-    if (toolName === "extraction-bank") {
-      const stmts = toolOutput.statements || [];
-      const lines = [`Total statements: ${stmts.length}`, `Total transactions: ${toolOutput.transactions?.length||0}`];
-      stmts.forEach((s) => lines.push(`  ${s.file}: ${s.transactionCount} tx | Opening $${s.openingBalance?.toFixed(2)??"?"} → Closing $${s.closingBalance?.toFixed(2)??"?"} | Debits $${s.totalDebits?.toFixed(2)??"?"} Credits $${s.totalCredits?.toFixed(2)??"?"}`));
-      if (toolOutput.dateGaps?.length>0) lines.push(`Date gaps: ${toolOutput.dateGaps.map((g)=>`${g.file} ${g.from}→${g.to} (${g.dayGap}d)`).join(", ")}`);
-      return lines.join("\n");
-    }
-    if (toolName === "extraction-invoice") {
-      const invs=toolOutput.invoices||[], amounts=invs.map((i)=>i.total).filter((a)=>a>0).sort((a,b)=>a-b), median=amounts.length?amounts[Math.floor(amounts.length/2)]:0;
-      return [`Total invoices: ${invs.length}`,`Success: ${toolOutput.summary?.successCount||0} | Failed: ${toolOutput.summary?.errorCount||0}`,`Amount range: $${amounts[0]?.toFixed(2)||0} – $${amounts[amounts.length-1]?.toFixed(2)||0} | Median: $${median.toFixed(2)}`,`Vendors: ${[...new Set(invs.map((i)=>i.vendorName).filter(Boolean))].slice(0,6).join(", ")}`].join("\n");
-    }
-    if (toolName === "transaction-analysis") {
-      const accs=toolOutput.accounts||[];
-      return [`Files: ${toolOutput.fileCount||0} | Accounts: ${accs.length}`,...accs.map((a)=>`  ${a.name}: ${a.totalTransactions||0} tx, ${a.monthlyData?.filter((m)=>m.count>0).length||0} active months`),`Flagged transfers: ${toolOutput.flaggedTransfers?.length||0}`].join("\n");
-    }
-    if (toolName === "tracker") return [`Bank accounts: ${toolOutput.totalBankAccounts||0} | Credit cards: ${toolOutput.totalCreditCards||0}`,`Months: ${toolOutput.totalMonths||0} | Gaps: ${toolOutput.gaps||0}`,toolOutput.missingMonths?.length?`Missing: ${toolOutput.missingMonths.slice(0,8).join(", ")}`:"No missing months"].filter(Boolean).join("\n");
-    if (toolName === "categorisation") { const files=toolOutput.files||[], folders={}; files.forEach((f)=>{folders[f.folder]=(folders[f.folder]||0)+1;}); return [`Total: ${files.length} files`,`Distribution: ${Object.entries(folders).sort((a,b)=>b[1]-a[1]).slice(0,7).map(([f,c])=>`${f.split("_").slice(1).join(" ")} (${c})`).join(", ")}`].join("\n"); }
-    if (toolName === "bates-stamp") { const files=toolOutput.files||[], nums=files.map((f)=>f.batesNumber||f.startBates).filter(Boolean); return [`Stamped: ${toolOutput.stampedCount||0} / ${toolOutput.totalFiles||0} files`,`Range: ${nums[0]||"?"} → ${nums[nums.length-1]||"?"}`,`Pages: ${toolOutput.totalStampedPages||"?"} stamped vs ${toolOutput.totalInputPages||"?"} input`].join("\n"); }
-    if (toolName === "splitter") { const splits=toolOutput.splits||[]; return [`Splits: ${splits.length} | Total pages: ${toolOutput.totalPages||0}`,...splits.map((s)=>`  "${s.name}": ${s.pageCount||s.pages||0} pages`)].join("\n"); }
-    if (toolName === "desc-categoriser") { const descs=toolOutput.descriptions||[], cats={}; descs.forEach((d)=>{cats[d.category]=(cats[d.category]||0)+1;}); return [`Total: ${descs.length} descriptions`,`Categories: ${Object.entries(cats).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([c,n])=>`${c} (${n})`).join(", ")}`].join("\n"); }
-    return JSON.stringify(toolOutput).slice(0, 2000);
-  } catch { return JSON.stringify(toolOutput).slice(0, 2000); }
-}
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 500,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64PDF } },
+          {
+            type: 'text',
+            text: `Look at this bank statement PDF and find the SUMMARY / BALANCE SUMMARY / CHECKING SUMMARY section.
 
-// ─────────────────────────────────────────────────────────────
-// AI ANALYSIS
-// ─────────────────────────────────────────────────────────────
-async function runAIAnalysis(toolName, toolOutput, ruleFindings) {
-  const domainKnowledge = DOMAIN_PROMPTS[toolName] || "";
-  const factsSummary    = buildFactsSummary(toolName, toolOutput);
-  const ruleIssues      = ruleFindings.filter((f) => f.type === "issue").map((f) => `[${f.sev.label}] ${f.msg}`);
-  const ruleWarnings    = ruleFindings.filter((f) => f.type === "warning").map((f) => f.msg);
+STEP 1 — Find every DEBIT line item and include ALL of these:
+- Withdrawals and Debits / Checks Paid / ATM & Debit Card Withdrawals
+- Electronic Withdrawals / Other Withdrawals / Wire Transfers Out
+- Service Charge Fees / Maintenance Fees / Analysis Fees / Monthly Fees
+- ANY fee, charge, or cost line — these are debits even if listed separately
 
-  const systemPrompt = `${domainKnowledge}
+STEP 2 — Find every CREDIT line item:
+- Deposits and Credits / Deposits and Additions / Wire Transfers In
 
-YOUR TASK: Find what rule checks missed using domain expertise.
-
-IMPORTANT — DO NOT FLAG THESE:
-- Large credits/deposits on a business account are NOT OCR errors.
-- Accounts starting late are NOT dormant.
-- External payments have no counterparts in dataset — expected.
-- A statement with very few transactions (1-5) is NOT automatically suspicious. Some accounts (LLC holding, escrow, special-purpose) genuinely have minimal activity. ONLY flag if balance math also fails.
-- If opening + credits - debits = closing balance exactly, extraction is COMPLETE regardless of transaction count.
-- Zero deposits in a month is normal for disbursement/holding accounts.
-- A $500 balance mismatch where the PDF has a physically redacted transaction amount is a SOURCE DOCUMENT issue, not an extraction error. Note it as such.
-
-SCORING: 90-100 clean, 75-89 minor issues, 55-74 real problems, 30-54 re-run needed, 0-29 unreliable.
-Be SPECIFIC. If data looks clean, score it high. Summary for attorney or senior analyst.
-
-Return ONLY valid JSON, no markdown:
-{"aiScore":<0-100>,"aiIssues":["..."],"aiWarnings":["..."],"aiRecommendations":["..."],"aiSummary":"..."}`;
-
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-5", max_tokens: 1500,
-    system: systemPrompt,
-    messages: [{ role: "user", content: `TOOL: ${toolName}\nIssues (${ruleIssues.length}): ${ruleIssues.join(" | ")||"none"}\nWarnings (${ruleWarnings.length}): ${ruleWarnings.join(" | ")||"none"}\nDATA:\n${factsSummary}\nWhat did the rules miss?` }],
-  });
-
-  const raw = response.content[0].text.trim().replace(/```json|```/g, "").trim();
-  return JSON.parse(raw);
-}
-
-// ─────────────────────────────────────────────────────────────
-// BANK QC REPORT
-// ─────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────
-// CATEGORY-LEVEL BREAKDOWN
-// Groups extracted transactions into the same categories the bank
-// uses in its summary section, then compares vs PDF debitItems.
-// This pinpoints WHICH category has the gap — not just that a gap exists.
-// ─────────────────────────────────────────────────────────────
-function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
-  // Categorise each extracted debit transaction
-  const extractedByCategory = {};
-
-  fileTransactions.forEach((t) => {
-    const debit = parseFloat(t.debit) || 0;
-    if (debit <= 0) return;
-
-    const desc = (t.description || "").toLowerCase();
-    const chk  = String(t.check_number || "").trim();
-
-    let category;
-
-    if (chk) {
-      category = "Checks Paid";
-    } else if (
-      desc.includes("card purchase") || desc.includes("card debit") ||
-      desc.includes("non-chase atm") || desc.includes("atm withdraw") ||
-      desc.includes("recurring card")
-    ) {
-      category = "ATM & Debit Card Withdrawals";
-    } else if (
-      desc.includes("fee") || desc.includes("maintenance fee") ||
-      desc.includes("service charge") || desc.includes("analysis fee") ||
-      desc.includes("monthly fee") || desc.includes("atm fee")
-    ) {
-      category = "Fees";
-    } else if (
-      desc.includes("owner withdrawal") ||
-      (desc.includes("withdrawal") && !desc.includes("online") && !desc.includes("atm"))
-    ) {
-      category = "Other Withdrawals";
-    } else {
-      // Everything else: online transfers, ACH, wire, Zelle, bill pay, tax, mortgage
-      category = "Electronic Withdrawals";
-    }
-
-    extractedByCategory[category] = (extractedByCategory[category] || 0) + debit;
-  });
-
-  // Round all extracted totals
-  Object.keys(extractedByCategory).forEach((k) => {
-    extractedByCategory[k] = +extractedByCategory[k].toFixed(2);
-  });
-
-  // If no PDF debitItems available, return simple totals only
-  if (!pdfDebitItems || pdfDebitItems.length === 0) {
-    return { available: false, extractedByCategory };
-  }
-
-  // Normalise PDF category labels to match our keys
-  const normalise = (label) => {
-    const l = (label || "").toLowerCase();
-    if (l.includes("check"))                                           return "Checks Paid";
-    if (l.includes("atm") || l.includes("debit card"))                return "ATM & Debit Card Withdrawals";
-    if (l.includes("electronic") || l.includes("transfer"))           return "Electronic Withdrawals";
-    if (l.includes("other withdrawal"))                                return "Other Withdrawals";
-    if (l.includes("fee") || l.includes("charge") || l.includes("service")) return "Fees";
-    return label; // keep original if no match
-  };
-
-  // Build per-category diff
-  const categoryDiffs = pdfDebitItems.map((item) => {
-    const normKey   = normalise(item.label);
-    const pdfAmt    = +parseFloat(item.amount).toFixed(2);
-    const extracted = +(extractedByCategory[normKey] || 0).toFixed(2);
-    const diff      = +(pdfAmt - extracted).toFixed(2);  // positive = under-extracted
-    return {
-      label:      item.label,        // original PDF label
-      normKey,                        // normalised key used for matching
-      pdfAmount:  pdfAmt,
-      extracted,
-      diff,                           // >0 = missing from extraction, <0 = over-extracted
-      match:      Math.abs(diff) < 1,
-    };
-  });
-
-  // Flag which categories have gaps > $1
-  const missingCategories = categoryDiffs.filter((c) => Math.abs(c.diff) > 1);
-
-  return {
-    available:         true,
-    categoryDiffs,
-    missingCategories, // the specific categories where extraction is short or over
-    extractedByCategory,
-  };
-}
-
-async function runBankQcReport(toolOutput) {
-  const statements           = toolOutput.statements           || [];
-  const transactions         = toolOutput.transactions         || [];
-  const reconciliation       = toolOutput.reconciliation       || [];
-  const runningBalanceErrors = toolOutput.runningBalanceErrors || [];
-  const dateGaps             = toolOutput.dateGaps             || [];
-  const amountOutliers       = toolOutput.amountOutliers       || [];
-
-  const seen = new Map(); let dupeCount = 0;
-  transactions.forEach((t) => { const key=`${t.date}-${t.debit}-${t.credit}-${t.description?.trim()}`; if(seen.has(key))dupeCount++;else seen.set(key,true); });
-
-  const totalCreditsSum = +statements.reduce((s, st) => s + (st.totalCredits || 0), 0).toFixed(2);
-  const totalDebitsSum  = +statements.reduce((s, st) => s + (st.totalDebits  || 0), 0).toFixed(2);
-
-  // Deterministic signals — two paths for likelyMissingTx
-  const computedSignals = statements.map((s) => {
-    const rec = reconciliation.find((r) => r.file === s.file) || {};
-    const balanceMismatch = s.openingBalance != null && s.closingBalance != null && s.totalDebits != null && s.totalCredits != null
-      ? Math.abs(s.openingBalance + s.totalCredits - s.totalDebits - s.closingBalance) > 1 : null;
-    const reconcAvailable = rec.pdfDebits != null || rec.pdfCredits != null;
-    const debitMismatch   = rec.pdfDebits  != null ? Math.abs(rec.pdfDebits  - (rec.rowDebits  || 0)) > 1 : null;
-    const creditMismatch  = rec.pdfCredits != null ? Math.abs(rec.pdfCredits - (rec.rowCredits || 0)) > 1 : null;
-    const debitDiff       = rec.pdfDebits  != null ? +Math.abs(rec.pdfDebits  - (rec.rowDebits  || 0)).toFixed(2) : null;
-    const creditDiff      = rec.pdfCredits != null ? +Math.abs(rec.pdfCredits - (rec.rowCredits || 0)).toFixed(2) : null;
-    // Path A: PDF data available — use diff > $100
-    // Path B: PDF data unavailable — fall back to balance math
-    const likelyMissingTx = reconcAvailable
-      ? (debitMismatch || creditMismatch) && Math.max(debitDiff ?? 0, creditDiff ?? 0) > 100
-      : balanceMismatch === true;
-
-    // Category-level breakdown — pinpoints WHICH section has the gap
-    // Uses extracted transactions for this specific file only
-    const fileTxs = transactions.filter((t) => t.description !== undefined); // all tx (file filter via statements)
-    const categoryBreakdown = buildCategoryBreakdown(
-      transactions, // passed as-is; buildCategoryBreakdown uses all debits
-      rec.debitItems || []
-    );
-
-    return {
-      file: s.file, balanceMismatch, debitMismatch, creditMismatch,
-      debitDiff, creditDiff, likelyMissingTx, reconcAvailable,
-      categoryBreakdown, // per-category PDF vs extracted comparison
-    };
-  });
-
-  const context = {
-    statements: statements.map((s) => ({ file: s.file, opening: s.openingBalance, closing: s.closingBalance, extractedDebits: s.totalDebits, extractedCredits: s.totalCredits, txCount: s.transactionCount })),
-    reconciliation: reconciliation.map((r) => ({
-      file: r.file, pdfDebits: r.pdfDebits, pdfCredits: r.pdfCredits,
-      rowDebits: r.rowDebits, rowCredits: r.rowCredits,
-      debitsMatch: r.debitsMatch, creditsMatch: r.creditsMatch,
-      debitLabel: r.debitLabel, creditLabel: r.creditLabel,
-      debitItems: r.debitItems || [],   // per-category PDF amounts
-      creditItems: r.creditItems || [],
-      error: r.error || null,
-    })),
-    runningBalanceErrors: runningBalanceErrors.slice(0, 15),
-    dateGaps, amountOutliers: amountOutliers.slice(0, 8),
-    duplicateCount: dupeCount, totalTransactions: transactions.length,
-    totalCreditsSum, totalDebitsSum, computedSignals,
-  };
-
-  const prompt = `You are a forensic accountant reviewing bank statement extraction quality for a legal case.
-
-EXTRACTION DATA:
-${JSON.stringify(context)}
-
-MANDATORY — use computedSignals directly, do NOT override:
-- likelyMissingTx: true  → "Missing Transactions" = fail
-- likelyMissingTx: false → "Missing Transactions" = pass
-- debitMismatch: true    → "Total Debits" = fail, show debitDiff
-- creditMismatch: true   → "Total Credits" = fail, show creditDiff
-- balanceMismatch: true  → "Closing Balance Integrity" = fail
-- reconcAvailable: false → note "PDF summary unavailable" in Credits/Debits rows
-
-CATEGORY-LEVEL ANALYSIS — use categoryBreakdown from computedSignals:
-Each signal has a categoryBreakdown object. If available=true, it contains categoryDiffs array showing exactly which PDF section (Checks Paid, ATM & Debit Card, Electronic Withdrawals, Other Withdrawals, Fees) has a gap.
-- For "Total Debits" details: if categoryBreakdown.available=true, list WHICH categories match and which don't
-- For "Missing Transactions" details: name the specific category where gap exists (e.g. "Electronic Withdrawals short by $500")
-- missingCategories array = categories with diff > $1 — use these directly
-- Example detail: "Electronic Withdrawals: PDF $100,573.68 vs Extracted $100,073.68 — $500 short (1 missing transaction)"
-
-Return ONLY this JSON, no markdown:
-{
-  "validationTable": [
-    {"check": "Total Credits (PDF vs Extracted)",        "status": "pass|warn|fail", "details": "..."},
-    {"check": "Total Debits (PDF vs Extracted)",         "status": "pass|warn|fail", "details": "..."},
-    {"check": "Net Change (Opening + Credits - Debits)", "status": "pass|warn|fail", "details": "Opening $X + Credits $Y - Debits $Z = Expected $A, Closing $B — match/mismatch"},
-    {"check": "Closing Balance Integrity",               "status": "pass|warn|fail", "details": "..."},
-    {"check": "Running Balance Integrity",               "status": "pass|warn|fail", "details": "X errors / No errors"},
-    {"check": "Missing Transactions",                    "status": "pass|warn|fail", "details": "..."},
-    {"check": "Duplicate Transactions",                  "status": "pass|warn|fail", "details": "X found / None"},
-    {"check": "Date Coverage",                           "status": "pass|warn|fail", "details": "Full/Limited — detail"}
-  ],
-  "transactionIssues": [],
-  "patternInsights": ["..."],
-  "riskLevel": "low|medium|high",
-  "riskExplanation": "...",
-  "recommendations": ["..."]
-}
+Return ONLY this JSON, nothing else:
+{"debitItems": [{"label": "<category name>", "amount": <number>}], "creditItems": [{"label": "<category name>", "amount": <number>}]}
 
 Rules:
-- Exactly 8 rows in the order above
-- Row 3 is Net Change — bank accounts are NOT double-entry books
-- Credits that match PDF deposit totals are NOT OCR errors
-- transactionIssues: from runningBalanceErrors only, max 15, empty [] if none
-- patternInsights: 4–6 bullets citing actual amounts. IMPORTANT: amountOutliers show "Nx the median" where N is a SIZE MULTIPLIER not an instance count — do NOT say "N instances of amount X". Say "amount X is Nx the median transaction size".
-- riskLevel: low = all pass, medium = 1-2 minor, high = balance mismatch or missing transactions
-- recommendations: 3–5 specific steps based on actual issues`;
+- List EVERY debit/fee/charge category as a separate item — do NOT omit service charges
+- amounts must be positive numbers (no minus signs)
+- If you cannot find the summary section, return: {"debitItems": [], "creditItems": []}
+- Return ONLY valid JSON, no markdown, no explanation`,
+          },
+        ],
+      }],
+    });
 
-  let response;
-  try {
-    response = await client.messages.create({ model: "claude-sonnet-4-5", max_tokens: 2000, messages: [{ role: "user", content: prompt }] });
-  } catch (apiErr) { throw new Error(`Bank QC Claude API call failed: ${apiErr.message}`); }
+    const raw  = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const data = JSON.parse(raw);
+    const debitItems  = data.debitItems  || [];
+    const creditItems = data.creditItems || [];
 
-  const raw = response.content[0]?.text?.trim().replace(/```json|```/g, "").trim();
-  if (!raw) throw new Error("Bank QC: empty response");
+    const pdfDebits  = debitItems.length  > 0 ? +debitItems.reduce((s, i)  => s + (parseFloat(i.amount)  || 0), 0).toFixed(2) : null;
+    const pdfCredits = creditItems.length > 0 ? +creditItems.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0).toFixed(2) : null;
 
-  let parsed;
-  try { parsed = JSON.parse(raw); }
-  catch (e) { throw new Error(`Bank QC: invalid JSON — ${e.message}`); }
-
-  return validateBankQcReport(parsed);
-}
-
-function validateBankQcReport(report) {
-  if (!report || typeof report !== "object") return null;
-  const hasTable    = Array.isArray(report.validationTable)   && report.validationTable.length  > 0;
-  const hasIssues   = Array.isArray(report.transactionIssues);
-  const hasInsights = Array.isArray(report.patternInsights)   && report.patternInsights.length  > 0;
-  const hasRisk     = ["low", "medium", "high"].includes(report.riskLevel);
-  const hasRecs     = Array.isArray(report.recommendations)   && report.recommendations.length  > 0;
-  if (!hasTable || !hasIssues || !hasInsights || !hasRisk || !hasRecs) {
-    console.error("Bank QC schema validation failed:", { hasTable, hasIssues, hasInsights, hasRisk, hasRecs });
-    return null;
+    return {
+      file:         fileName,
+      pdfDebits,
+      pdfCredits,
+      debitItems,   // full array — used for category-level gap detection in QC
+      creditItems,  // full array
+      debitLabel:   debitItems.map(i  => i.label).join(' + ') || 'Total Debits',
+      creditLabel:  creditItems.map(i => i.label).join(' + ') || 'Total Credits',
+      rowDebits:    +rowDebits.toFixed(2),
+      rowCredits:   +rowCredits.toFixed(2),
+      debitsMatch:  pdfDebits  != null && Math.abs(pdfDebits  - rowDebits)  < 2,
+      creditsMatch: pdfCredits != null && Math.abs(pdfCredits - rowCredits) < 2,
+    };
+  } catch (err) {
+    console.log('Reconciliation failed for', fileName, '|', err.message);
+    return {
+      file: fileName, pdfDebits: null, pdfCredits: null,
+      debitLabel: 'Total Debits', creditLabel: 'Total Credits',
+      rowDebits: +rowDebits.toFixed(2), rowCredits: +rowCredits.toFixed(2),
+      debitsMatch: false, creditsMatch: false,
+      error: 'Could not read summary totals from PDF',
+    };
   }
-  const validStatuses = new Set(["pass", "warn", "fail"]);
-  report.validationTable = report.validationTable.map((row) => ({ check: String(row.check??"—"), status: validStatuses.has(row.status)?row.status:"warn", details: String(row.details??"—") }));
-  report.transactionIssues = report.transactionIssues.map((row) => ({ row: row.row??null, date: row.date??"—", issueType: String(row.issueType??"Unknown"), expected: String(row.expected??"—"), extracted: String(row.extracted??"—") }));
-  return report;
 }
 
-function calculateScore(toolName, ruleFindings, aiScore) {
-  const cfg = TOOL_CONFIG[toolName] || { ruleWeight: 0.60, aiWeight: 0.40, cap: 40, passAt: 88 };
-  const cappedDeduct = Math.min(ruleFindings.reduce((sum, f) => sum + f.sev.deduct, 0), cfg.cap);
-  return Math.max(0, Math.min(100, Math.round((100 - cappedDeduct) * cfg.ruleWeight + aiScore * cfg.aiWeight)));
+// ── QC Data Builder ──────────────────────────────────────────
+function buildBankQcData(allStatements, allTransactions, reconciliation) {
+
+  // Date gaps > 5 days
+  const dateGaps = [];
+  allStatements.forEach((stmt) => {
+    const txs = (stmt.transactions || []).filter(t => t.date).sort((a, b) => new Date(a.date) - new Date(b.date));
+    for (let i = 1; i < txs.length; i++) {
+      const dayGap = Math.round((new Date(txs[i].date) - new Date(txs[i-1].date)) / 86400000);
+      if (dayGap > 5) dateGaps.push({ file: stmt.fileName, from: txs[i-1].date, to: txs[i].date, dayGap });
+    }
+  });
+
+  // Amount outliers — DEBIT transactions only, exclude checks
+  const amountOutliers = [];
+  allStatements.forEach((stmt) => {
+    const amounts = (stmt.transactions || []).map((t) => Math.abs(t.debit || t.credit || 0)).filter((a) => a > 0).sort((a, b) => a - b);
+    if (amounts.length < 5) return;
+    const median = amounts[Math.floor(amounts.length / 2)];
+    (stmt.transactions || []).forEach((t) => {
+      if (!((t.debit || 0) > 0)) return;                              // debits only
+      if (t.check_number && String(t.check_number).trim()) return;    // skip checks
+
+      // Skip known legitimate large electronic payments — these are real transactions,
+      // not OCR errors. AmEx ACH, IRS tax payments, wire transfers, Zelle, mortgage
+      // payments etc. can be any size and should never be flagged as outliers.
+      const desc = (t.description || "").toLowerCase();
+      const isElectronicPayment =
+        desc.includes("american express") || desc.includes("amex") ||
+        desc.includes("irs ") || desc.includes("usataxpymt") ||
+        desc.includes("wire") || desc.includes("zelle") ||
+        desc.includes("ach ") || desc.includes(" ach") ||
+        desc.includes("mortgage") || desc.includes("mtg pymt") ||
+        desc.includes("tax") || desc.includes("online transfer") ||
+        desc.includes("bill pay") || desc.includes("quickpay");
+      if (isElectronicPayment) return;
+
+      const amt = t.debit || 0;
+      if (amt > median * 20 && median > 0) amountOutliers.push({ file: stmt.fileName, date: t.date, amount: amt, times: Math.round(amt / median) });
+    });
+  });
+
+  // Running balance errors — only when overall math fails, preserve statement order
+  const statementsWithBadMath = new Set(
+    allStatements.filter((s) => {
+      if (s.openingBalance == null || s.closingBalance == null || s.totalDebits == null || s.totalCredits == null) return false;
+      return Math.abs(s.openingBalance + s.totalCredits - s.totalDebits - s.closingBalance) > 1;
+    }).map((s) => s.fileName)
+  );
+
+  const runningBalanceErrors = [];
+  allStatements.forEach((stmt) => {
+    if (!statementsWithBadMath.has(stmt.fileName)) return;
+    const rawTxs = stmt.transactions || [];
+    if (!rawTxs.length || rawTxs[0].running_balance == null) return;
+
+    // Sort by date, preserve intra-day statement order via original index
+    const txs = rawTxs.map((t, i) => ({ ...t, _idx: i })).filter(t => t.date).sort((a, b) => {
+      const diff = new Date(a.date).getTime() - new Date(b.date).getTime();
+      return diff !== 0 ? diff : a._idx - b._idx;
+    });
+
+    let running = stmt.openingBalance || 0;
+    let errorCount = 0;
+    txs.forEach((t, idx) => {
+      running = running + (t.credit || 0) - (t.debit || 0);
+      const printed = t.running_balance;
+      if (printed != null && Math.abs(running - printed) > 1) {
+        errorCount++;
+        // Cap at 3 — the rest are cascade artifacts from the same root cause
+        if (errorCount <= 3) runningBalanceErrors.push({ file: stmt.fileName, row: idx + 1, expected: running.toFixed(2), found: printed.toFixed(2) });
+        running = printed;
+      }
+    });
+  });
+
+  return {
+    statements: allStatements.map((s) => ({
+      file:             s.fileName,
+      periodStart:      s.periodStart    || null,
+      periodEnd:        s.periodEnd      || null,
+      openingBalance:   s.openingBalance ?? null,
+      closingBalance:   s.closingBalance ?? null,
+      totalDebits:      s.totalDebits    ?? null,
+      totalCredits:     s.totalCredits   ?? null,
+      transactionCount: (s.transactions || []).length,
+    })),
+    transactions: allTransactions.map((t) => ({
+      date: t.date, description: t.description,
+      check_number: t.check_number || "", // needed by buildCategoryBreakdown to identify checks
+      debit: t.debit, credit: t.credit,
+      runningBalance: t.running_balance ?? null,
+    })),
+    dateGaps,
+    amountOutliers,
+    runningBalanceErrors,
+    // Reconciliation embedded here so QCBadge always has it via toolOutput
+    // without needing a separate metadata prop on the calling page
+    reconciliation: reconciliation || [],
+  };
 }
 
-function getStatus(toolName, score) {
-  const cfg = TOOL_CONFIG[toolName] || { passAt: 88 };
-  return score >= cfg.passAt ? "PASS" : score >= 65 ? "WARNING" : "FAIL";
-}
-
-function buildScoreBreakdown(ruleFindings) {
-  return [...ruleFindings].sort((a, b) => b.sev.deduct - a.sev.deduct).slice(0, 3).map((f) => ({ label: f.msg, impact: f.sev.deduct, severity: f.sev.label, type: f.type }));
-}
-
-// ─────────────────────────────────────────────────────────────
-// MAIN POST HANDLER
-// ─────────────────────────────────────────────────────────────
-export async function POST(req) {
+// ── Main Handler ─────────────────────────────────────────────
+export async function POST(request) {
   try {
-    const body = await req.json();
-    const { toolName, toolOutput, metadata } = body;
+    const formData = await request.formData();
+    const files    = formData.getAll('pdfs');
+    const pdfFiles = files.filter(f => f.name?.toLowerCase().endsWith('.pdf') && f.size > 0);
 
-    if (!toolName || !toolOutput) {
-      return NextResponse.json({ error: "Both toolName and toolOutput are required" }, { status: 400 });
+    console.log('Total files received:', files.length, '| PDF files:', pdfFiles.length);
+
+    if (pdfFiles.length === 0) {
+      return Response.json({ error: `No PDF files found! Received ${files.length} files total.` }, { status: 400 });
     }
 
-    // Merge metadata — but NEVER let null metadata overwrite reconciliation
-    // that was embedded in qcData by the extraction route
-    const enriched = { ...toolOutput, ...(metadata || {}) };
-    if (!enriched.reconciliation?.length && toolOutput.reconciliation?.length) {
-      enriched.reconciliation = toolOutput.reconciliation;
+    const results = await Promise.all(pdfFiles.map(async (file) => {
+      try {
+        console.log('Processing:', file.name, '| Size:', file.size);
+        const base64PDF = Buffer.from(await file.arrayBuffer()).toString('base64');
+
+        const [claudeResponse] = await Promise.all([
+          client.messages.stream({
+            model: 'claude-sonnet-4-5',
+            max_tokens: 32000,
+            messages: [{ role: 'user', content: [
+              { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64PDF } },
+              { type: 'text', text: PROMPT },
+            ]}],
+          }).finalMessage(),
+          Promise.resolve(),
+        ]);
+
+        let responseText = claudeResponse.content[0].text.trim();
+        responseText     = repairJSON(responseText);
+        const data       = JSON.parse(responseText);
+
+        if (data.error === 'NOT_A_BANK_STATEMENT') {
+          return { success: false, error: { file: file.name, error: `Not a bank statement — detected as: ${data.document_type}` } };
+        }
+
+        const transactions = (data.transactions || []).map(t => ({
+          file_name: file.name, bank_name: data.bank_name || '', account_holder: data.account_holder || '',
+          account_number: data.account_number || '', statement_period: data.statement_period || '',
+          date: t.date || '', description: t.description || '', check_number: t.check_number || '',
+          debit: t.debit || 0, credit: t.credit || 0, balance: t.balance ?? '',
+          running_balance: t.running_balance ?? '', month: t.month || '', type: t.type || '', year: t.year || '',
+        }));
+
+        const rowDebits  = (data.transactions || []).reduce((s, t) => s + (parseFloat(t.debit)  || 0), 0);
+        const rowCredits = (data.transactions || []).reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
+
+        const reconciliationResult = await runAIReconciliation(base64PDF, file.name, rowDebits, rowCredits);
+
+        console.log('Success:', file.name, '| Transactions:', transactions.length);
+
+        return {
+          success: true,
+          transactions,
+          summary: {
+            file: file.name, bank: data.bank_name || '', account_holder: data.account_holder || '',
+            account_number: data.account_number || '', period: data.statement_period || '',
+            opening_balance: data.opening_balance || 0, closing_balance: data.closing_balance || 0,
+            transaction_count: transactions.length,
+          },
+          statementObj: {
+            fileName: file.name, openingBalance: data.opening_balance || 0, closingBalance: data.closing_balance || 0,
+            totalDebits: +rowDebits.toFixed(2), totalCredits: +rowCredits.toFixed(2),
+            transactions: data.transactions || [],
+          },
+          reconciliationResult,
+          outputFileName: `${file.name.replace(/\.pdf$/i, '')}.xlsx`,
+        };
+      } catch (err) {
+        console.log('Failed:', file.name, '|', err.message);
+        return { success: false, error: { file: file.name, error: err.message } };
+      }
+    }));
+
+    const allTransactions = [], allStatements = [], summaries = [], reconciliation = [], errors = [];
+    let outputFileName = 'bank_extraction.xlsx';
+
+    results.forEach(r => {
+      if (r.success) {
+        allTransactions.push(...r.transactions);
+        allStatements.push(r.statementObj);
+        summaries.push(r.summary);
+        if (r.reconciliationResult) reconciliation.push(r.reconciliationResult);
+        if (outputFileName === 'bank_extraction.xlsx' && r.outputFileName) outputFileName = r.outputFileName;
+      } else { errors.push(r.error); }
+    });
+
+    if (results.filter(r => r.success).length > 1) {
+      outputFileName = results.filter(r => r.success && r.outputFileName).map(r => r.outputFileName.replace('.xlsx','')).join('_') + '.xlsx';
     }
 
-    const ruleFindings = runRuleChecks(toolName, enriched);
-    const ruleIssues   = ruleFindings.filter((f) => f.type === "issue").map((f) => f.msg);
-    const ruleWarnings = ruleFindings.filter((f) => f.type === "warning").map((f) => f.msg);
+    if (summaries.length === 0) {
+      return Response.json({ error: 'No valid bank statements found.', details: errors }, { status: 400 });
+    }
 
-    const aiDefault = { aiScore: 70, aiIssues: [], aiWarnings: [], aiRecommendations: ["Re-run QC once AI analysis is available."], aiSummary: "AI analysis unavailable. Rule-based checks applied only." };
+    // ── Build Excel ──────────────────────────────────────────
+    const wb = new ExcelJS.Workbook();
+    const txSheet = wb.addWorksheet('All Transactions');
+    txSheet.columns = [
+      { header: 'File Name',        key: 'file_name',        width: 30 },
+      { header: 'Bank Name',        key: 'bank_name',        width: 22 },
+      { header: 'Account Holder',   key: 'account_holder',   width: 22 },
+      { header: 'Account Number',   key: 'account_number',   width: 16 },
+      { header: 'Statement Period', key: 'statement_period', width: 24 },
+      { header: 'Month',            key: 'month',            width: 16 },
+      { header: 'Date',             key: 'date',             width: 16 },
+      { header: 'Description',      key: 'description',      width: 42 },
+      { header: 'Check No.',        key: 'check_number',     width: 12 },
+      { header: 'Debit',            key: 'debit',            width: 14 },
+      { header: 'Credit',           key: 'credit',           width: 14 },
+      { header: 'Balance',          key: 'balance',          width: 16 },
+      { header: 'Running Balance',  key: 'running_balance',  width: 18 },
+      { header: 'Type',             key: 'type',             width: 10 },
+      { header: 'Year',             key: 'year',             width: 10 },
+    ];
+    txSheet.getRow(1).eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2444' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    txSheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-    const [aiResult, bankQcReport] = await Promise.all([
-      runAIAnalysis(toolName, toolOutput, ruleFindings).catch((err) => { console.error("QC AI failed:", err.message); return aiDefault; }),
-      toolName === "extraction-bank"
-        ? runBankQcReport(enriched).catch((err) => { console.error("Bank QC report failed:", err.message); return null; })
-        : Promise.resolve(null),
-    ]);
+    const yellow    = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+    const lightBlue = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0FE' } };
+    const white     = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
 
-    const finalScore = calculateScore(toolName, ruleFindings, aiResult.aiScore);
-    const status     = getStatus(toolName, finalScore);
+    allTransactions.forEach((t, idx) => {
+      const debitVal  = t.debit  && t.debit  !== 0 ? t.debit  : null;
+      const creditVal = t.credit && t.credit !== 0 ? t.credit : null;
+      const descVal   = t.description && String(t.description).trim().length > 0 ? t.description : null;
+      const runBal    = t.running_balance !== undefined && t.running_balance !== null ? t.running_balance : null;
+      const row = txSheet.addRow({
+        file_name: t.file_name, bank_name: t.bank_name, account_holder: t.account_holder,
+        account_number: t.account_number, statement_period: t.statement_period,
+        month: t.month || '', date: t.date || '', description: descVal ?? '',
+        check_number: t.check_number || '', debit: debitVal ?? '', credit: creditVal ?? '',
+        balance: t.balance ?? '', running_balance: runBal ?? '', type: t.type || '', year: t.year || '',
+      });
+      const missingDesc    = !descVal;
+      const missingAmounts = !debitVal && !creditVal;
+      if (missingDesc || missingAmounts) {
+        row.eachCell({ includeEmpty: true }, cell => { cell.fill = yellow; });
+      } else {
+        row.eachCell({ includeEmpty: true }, cell => { cell.fill = idx % 2 === 0 ? white : lightBlue; });
+      }
+    });
 
-    return NextResponse.json({
-      status,
-      score:           finalScore,
-      issues:          [...ruleIssues,   ...(aiResult.aiIssues   || [])],
-      warnings:        [...ruleWarnings, ...(aiResult.aiWarnings  || [])],
-      recommendations: aiResult.aiRecommendations || [],
-      summary:         aiResult.aiSummary,
-      scoreBreakdown:  buildScoreBreakdown(ruleFindings),
-      bankQcReport,
-      meta: { toolName, ruleIssueCount: ruleIssues.length, ruleWarningCount: ruleWarnings.length, aiScore: aiResult.aiScore, timestamp: new Date().toISOString() },
+    if (allTransactions.length === 0) {
+      const noteRow = txSheet.addRow({ file_name: summaries[0]?.file || '', bank_name: summaries[0]?.bank || '', description: 'No transactions this statement period' });
+      noteRow.getCell('description').font = { italic: true, color: { argb: 'FF888888' } };
+    }
+
+    const sumSheet = wb.addWorksheet('Summary');
+    sumSheet.columns = [
+      { header: 'File Name',          key: 'file',              width: 30 },
+      { header: 'Bank Name',          key: 'bank',              width: 22 },
+      { header: 'Account Holder',     key: 'account_holder',    width: 22 },
+      { header: 'Account Number',     key: 'account_number',    width: 16 },
+      { header: 'Statement Period',   key: 'period',            width: 24 },
+      { header: 'Opening Balance',    key: 'opening_balance',   width: 16 },
+      { header: 'Closing Balance',    key: 'closing_balance',   width: 16 },
+      { header: 'Total Transactions', key: 'transaction_count', width: 20 },
+    ];
+    sumSheet.getRow(1).eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F2444' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    sumSheet.views = [{ state: 'frozen', ySplit: 1 }];
+    summaries.forEach((s, idx) => {
+      const row = sumSheet.addRow(s);
+      row.eachCell({ includeEmpty: true }, cell => { cell.fill = idx % 2 === 0 ? white : lightBlue; });
+    });
+
+    const excelBase64 = Buffer.from(await wb.xlsx.writeBuffer()).toString('base64');
+
+    return Response.json({
+      success:           true,
+      totalFiles:        pdfFiles.length,
+      totalTransactions: allTransactions.length,
+      summaries,
+      errors,
+      excelFile:         excelBase64,
+      fileName:          outputFileName,
+      reconciliation,
+      // reconciliation embedded in qcData so QCBadge gets it via toolOutput automatically
+      qcData: buildBankQcData(allStatements, allTransactions, reconciliation),
     });
 
   } catch (err) {
-    console.error("QC critical error:", err.message);
-    return NextResponse.json({ status: "WARNING", score: 50, issues: [], warnings: ["QC encountered an unexpected error."], recommendations: ["Check server logs."], summary: "QC could not complete.", scoreBreakdown: [], bankQcReport: null });
+    console.log('Bank extract error:', err.message);
+    return Response.json({ error: err.message }, { status: 500 });
   }
 }
