@@ -22,9 +22,6 @@ function warning(msg, sev = SEV.MINOR) { return { msg, sev, type: "warning" }; }
 
 // ─────────────────────────────────────────────────────────────
 // PER-TOOL CONFIG
-// ruleWeight + aiWeight = 1.0
-// cap = max total rule deduction (prevents one bad rule nuking score)
-// passAt = minimum score for PASS
 // ─────────────────────────────────────────────────────────────
 const TOOL_CONFIG = {
   "extraction-bank":      { ruleWeight: 0.70, aiWeight: 0.30, cap: 40, passAt: 88 },
@@ -255,23 +252,11 @@ function runRuleChecks(toolName, toolOutput) {
       }
     }
 
-    // Running balance errors — only flag when statement-level balance math ALSO fails.
-    //
-    // WHY: Many banks (Chase, BofA) do not print a running balance column.
-    // Claude computes running_balance in the order it sees transactions, which
-    // is often TYPE-sorted (deposits first, then checks, then ATM, then fees)
-    // not DATE-sorted. QC recomputes in date order → mismatch every row →
-    // 20+ false positives on a perfectly clean statement.
-    //
-    // If opening + credits - debits = closing ✅, the amounts are correct and
-    // running balance mismatches are pure sort-order artifacts — suppress them.
-    // Only show running balance errors when balance math ALSO fails, which
-    // indicates genuine OCR corruption in the transaction amounts themselves.
     const statementsWithBadMath = new Set(
       statements
         .filter((s) => {
           if (s.openingBalance == null || s.closingBalance == null ||
-              s.totalDebits == null || s.totalCredits == null) return false;
+              s.totalDebits    == null || s.totalCredits   == null) return false;
           const expected = +(s.openingBalance + s.totalCredits - s.totalDebits).toFixed(2);
           return Math.abs(expected - s.closingBalance) > 1;
         })
@@ -279,7 +264,6 @@ function runRuleChecks(toolName, toolOutput) {
     );
 
     (toolOutput.runningBalanceErrors || []).forEach((e) => {
-      // Only surface this error if the statement's overall math is also wrong
       if (statementsWithBadMath.has(e.file)) {
         findings.push(issue(
           `${e.file} row ${e.row}: running balance error — expected $${e.expected}, found $${e.found}`,
@@ -304,7 +288,7 @@ function runRuleChecks(toolName, toolOutput) {
       findings.push(warning(`${g.file}: ${g.dayGap}-day gap (${g.from} → ${g.to}) — verify no missing pages`, SEV.MINOR));
     });
 
-    // Invalid dates — OCR mangled
+    // Invalid dates
     const invalidDates = allTransactions.filter((t) => t.date && !isValidDate(t.date));
     if (invalidDates.length > 0) {
       findings.push(issue(`${invalidDates.length} transaction(s) have invalid dates — OCR may have mangled the date field`, SEV.MAJOR));
@@ -340,7 +324,6 @@ function runRuleChecks(toolName, toolOutput) {
       return findings;
     }
 
-    // Tax math check
     let taxErrors = 0;
     invoices.forEach((inv) => {
       if (inv.subtotal != null && inv.tax != null && inv.total != null) {
@@ -350,26 +333,22 @@ function runRuleChecks(toolName, toolOutput) {
     });
     if (taxErrors > 0) findings.push(issue(`${taxErrors} invoice(s): subtotal + tax ≠ total — extraction or OCR error`, SEV.MAJOR));
 
-    // Duplicate invoice numbers
     const invoiceNums = invoices.map((i) => i.invoiceNumber).filter(Boolean);
     const uniqueNums = new Set(invoiceNums);
     if (uniqueNums.size < invoiceNums.length) {
       findings.push(issue(`${invoiceNums.length - uniqueNums.size} duplicate invoice number(s) — same invoice extracted twice?`, SEV.MAJOR));
     }
 
-    // Future-dated invoices
     const futureDated = invoices.filter((inv) => inv.invoiceDate && isFutureDate(inv.invoiceDate));
     if (futureDated.length > 0) {
       findings.push(issue(`${futureDated.length} invoice(s) are future-dated — OCR error or pre-dated document`, SEV.MAJOR));
     }
 
-    // Invalid dates
     const invalidDates = invoices.filter((inv) => inv.invoiceDate && !isValidDate(inv.invoiceDate));
     if (invalidDates.length > 0) {
       findings.push(issue(`${invalidDates.length} invoice(s) have invalid dates — OCR may have mangled the date field`, SEV.MAJOR));
     }
 
-    // Amount outliers
     const amounts = invoices.map((i) => i.total).filter((a) => a > 0).sort((a, b) => a - b);
     if (amounts.length > 3) {
       const median = amounts[Math.floor(amounts.length / 2)];
@@ -379,7 +358,6 @@ function runRuleChecks(toolName, toolOutput) {
       }
     }
 
-    // Missing fields
     const missingTotal  = invoices.filter((i) => i.total == null).length;
     const missingVendor = invoices.filter((i) => !i.vendorName?.trim()).length;
     const missingDate   = invoices.filter((i) => !i.invoiceDate?.trim()).length;
@@ -387,7 +365,6 @@ function runRuleChecks(toolName, toolOutput) {
     if (missingVendor > 0) findings.push(warning(`${missingVendor} invoice(s) missing vendor name`, SEV.MINOR));
     if (missingDate > 0)   findings.push(warning(`${missingDate} invoice(s) missing invoice date`, SEV.MINOR));
 
-    // Failure rate
     const failRate = ((summary.errorCount || 0) / (summary.totalFiles || 1)) * 100;
     if (failRate > 20) findings.push(issue(`${failRate.toFixed(0)}% of invoices failed extraction — check PDF quality`, SEV.MAJOR));
     else if (failRate > 5) findings.push(warning(`${failRate.toFixed(0)}% of invoices failed extraction`, SEV.MINOR));
@@ -407,7 +384,6 @@ function runRuleChecks(toolName, toolOutput) {
     accounts.forEach((acc) => {
       if (!acc.monthlyData?.length) return;
 
-      // Spike detection
       const counts = acc.monthlyData.map((m) => m.count).filter((c) => c > 0);
       if (counts.length > 2) {
         const avg = counts.reduce((s, c) => s + c, 0) / counts.length;
@@ -419,9 +395,6 @@ function runRuleChecks(toolName, toolOutput) {
         });
       }
 
-      // ── FIXED: Dormancy check ──────────────────────────────────
-      // Only flag 6+ consecutive zero months IN THE MIDDLE of an active period.
-      // Do NOT flag accounts that simply start late (e.g. a card opened mid-period).
       const nonZeroIndices = acc.monthlyData
         .map((m, i) => (m.count > 0 ? i : -1))
         .filter((i) => i !== -1);
@@ -429,7 +402,6 @@ function runRuleChecks(toolName, toolOutput) {
       if (nonZeroIndices.length >= 2) {
         const first = nonZeroIndices[0];
         const last  = nonZeroIndices[nonZeroIndices.length - 1];
-        // Look only at months between first and last active month
         const middleSlice = acc.monthlyData.slice(first, last + 1);
         let gapRun = 0;
         let longestGap = 0;
@@ -441,7 +413,6 @@ function runRuleChecks(toolName, toolOutput) {
             gapRun = 0;
           }
         });
-        // Only flag if there's a gap of 6+ consecutive zero months mid-period
         if (longestGap >= 6) {
           findings.push(warning(
             `"${acc.name}": ${longestGap} consecutive zero-activity months mid-period — verify statements are complete for this period`,
@@ -450,7 +421,6 @@ function runRuleChecks(toolName, toolOutput) {
         }
       }
 
-      // Zero-activity gaps (shorter gaps — still worth listing per month)
       if (nonZeroIndices.length >= 2) {
         const first = nonZeroIndices[0];
         const last  = nonZeroIndices[nonZeroIndices.length - 1];
@@ -459,7 +429,6 @@ function runRuleChecks(toolName, toolOutput) {
           .filter((m) => m.count === 0)
           .map((m) => m.month);
         if (gaps.length > 0 && gaps.length < 6) {
-          // Only show smaller gaps (6+ already caught above)
           findings.push(warning(
             `"${acc.name}": no activity in ${gaps.slice(0, 6).join(", ")}${gaps.length > 6 ? ` +${gaps.length - 6} more` : ""} — missing statements?`,
             SEV.MINOR
@@ -468,9 +437,6 @@ function runRuleChecks(toolName, toolOutput) {
       }
     });
 
-    // ── FIXED: Interbank unmatched — softer framing ────────────
-    // These are typically external payments (AmEx, vendors, wire out) —
-    // not necessarily missing accounts within the dataset.
     if (flaggedTransfers.length > 0) {
       findings.push(warning(
         `${flaggedTransfers.length} outgoing transfer(s) have no matching inbound in this dataset — likely external payments (vendors, credit cards, third parties). Review if any counterparty should be in scope.`,
@@ -478,7 +444,6 @@ function runRuleChecks(toolName, toolOutput) {
       ));
     }
 
-    // Very low total transactions
     const totalTx = accounts.reduce((s, a) => s + (a.totalTransactions || 0), 0);
     if (fileCount > 0 && totalTx < fileCount * 5) {
       findings.push(warning(
@@ -542,7 +507,6 @@ function runRuleChecks(toolName, toolOutput) {
         : (f.confidence ?? 0.5),
     }));
 
-    // HARD RULE — bank statement in wrong folder
     const bankInWrongFolder = files.filter(
       (f) => f.file?.toLowerCase().includes("bank") &&
              f.folder && !f.folder.toLowerCase().includes("bank")
@@ -554,18 +518,15 @@ function runRuleChecks(toolName, toolOutput) {
       ));
     }
 
-    // Semantic mismatches from API route
     (toolOutput.semanticMismatches || []).forEach((m) => {
       findings.push(warning(`"${m.file}" → ${m.folder} but name suggests ${m.suggestedFolder}`, SEV.MINOR));
     });
 
-    // Low confidence rate
     const lowConf = normalized.filter((f) => f.confidenceFloat < 0.5);
     const lowPct  = (lowConf.length / files.length) * 100;
     if (lowPct > 25) findings.push(issue(`${lowPct.toFixed(0)}% of files have low confidence`, SEV.MAJOR));
     else if (lowPct > 10) findings.push(warning(`${lowPct.toFixed(0)}% of files have low confidence`, SEV.MINOR));
 
-    // All-HIGH suspicious
     if (normalized.every((f) => f.confidenceFloat >= 0.9) && files.length > 20) {
       findings.push(warning(
         `All ${files.length} files scored HIGH confidence — possible AI overconfidence, spot-check manually`,
@@ -573,7 +534,6 @@ function runRuleChecks(toolName, toolOutput) {
       ));
     }
 
-    // Miscellaneous overflow
     const misc    = files.filter((f) => f.folder?.toLowerCase().includes("miscellaneous"));
     const miscPct = (misc.length / files.length) * 100;
     if (miscPct > 15) findings.push(issue(`${miscPct.toFixed(0)}% of files in Miscellaneous`, SEV.MAJOR));
@@ -585,24 +545,22 @@ function runRuleChecks(toolName, toolOutput) {
 
   // ── BATES STAMPING ──────────────────────────────────────────
   if (toolName === "bates-stamp") {
-    const files            = toolOutput.files || [];
-    const stampedCount     = toolOutput.stampedCount || 0;
-    const totalFiles       = toolOutput.totalFiles || files.length;
-    const totalInputPages  = toolOutput.totalInputPages || 0;
+    const files             = toolOutput.files || [];
+    const stampedCount      = toolOutput.stampedCount || 0;
+    const totalFiles        = toolOutput.totalFiles || files.length;
+    const totalInputPages   = toolOutput.totalInputPages || 0;
     const totalStampedPages = toolOutput.totalStampedPages || 0;
 
     if (totalFiles > 0 && stampedCount < totalFiles) {
       findings.push(issue(`${totalFiles - stampedCount} of ${totalFiles} file(s) were not stamped`, SEV.MAJOR));
     }
 
-    // Duplicate Bates numbers
     const batesNumbers = files.map((f) => f.batesNumber || f.startBates).filter(Boolean);
     const unique = new Set(batesNumbers);
     if (unique.size < batesNumbers.length) {
       findings.push(issue("Duplicate Bates numbers detected — numbering is incorrect, do not produce", SEV.CRITICAL));
     }
 
-    // Sequence gaps
     const nums = batesNumbers
       .map((b) => parseInt(b.replace(/\D/g, ""), 10))
       .filter((n) => !isNaN(n))
@@ -623,13 +581,11 @@ function runRuleChecks(toolName, toolOutput) {
       ));
     }
 
-    // Prefix consistency
     const prefixes = [...new Set(batesNumbers.map((b) => b.replace(/\d+$/, "")))];
     if (prefixes.length > 1) {
       findings.push(issue(`Inconsistent Bates prefix: ${prefixes.join(", ")}`, SEV.MAJOR));
     }
 
-    // Page count match
     if (totalInputPages > 0 && totalStampedPages > 0 && totalStampedPages !== totalInputPages) {
       findings.push(issue(
         `Page count mismatch: ${totalStampedPages} stamped vs ${totalInputPages} input pages`,
@@ -697,7 +653,6 @@ function runRuleChecks(toolName, toolOutput) {
       findings.push(warning(`${((uncategorised / total) * 100).toFixed(0)}% of descriptions uncategorised`, SEV.MINOR));
     }
 
-    // Inconsistency: same description, different categories
     const freqMap = {};
     descriptions.forEach((d) => {
       const key = d.description?.toLowerCase().trim();
@@ -726,7 +681,7 @@ function runRuleChecks(toolName, toolOutput) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// FACTS SUMMARY — readable structured summary for AI
+// FACTS SUMMARY
 // ─────────────────────────────────────────────────────────────
 function buildFactsSummary(toolName, toolOutput) {
   try {
@@ -827,7 +782,7 @@ function buildFactsSummary(toolName, toolOutput) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// LAYER 2: AI Analysis
+// LAYER 2: AI Analysis (unchanged)
 // ─────────────────────────────────────────────────────────────
 async function runAIAnalysis(toolName, toolOutput, ruleFindings) {
   const domainKnowledge = DOMAIN_PROMPTS[toolName] || "";
@@ -890,6 +845,219 @@ What did the rules miss?`;
 }
 
 // ─────────────────────────────────────────────────────────────
+// BANK QC REPORT — structured 5-section report for extraction-bank
+// Runs in parallel with runAIAnalysis — no extra latency cost.
+// ─────────────────────────────────────────────────────────────
+async function runBankQcReport(toolOutput) {
+  const statements    = toolOutput.statements    || [];
+  const transactions  = toolOutput.transactions  || [];
+  const reconciliation = toolOutput.reconciliation || [];
+  const runningBalanceErrors = toolOutput.runningBalanceErrors || [];
+  const dateGaps      = toolOutput.dateGaps      || [];
+  const amountOutliers = toolOutput.amountOutliers || [];
+
+  // Compute duplicate count
+  const seen = new Map();
+  let dupeCount = 0;
+  transactions.forEach((t) => {
+    const key = `${t.date}-${t.debit}-${t.credit}-${t.description?.trim()}`;
+    if (seen.has(key)) dupeCount++;
+    else seen.set(key, true);
+  });
+
+  // Compute credit and debit sums across all statements
+  const totalCreditsSum = +statements.reduce((s, st) => s + (st.totalCredits || 0), 0).toFixed(2);
+  const totalDebitsSum  = +statements.reduce((s, st) => s + (st.totalDebits  || 0), 0).toFixed(2);
+
+  // Fix 3 — Computed deterministic signals: Claude gets hard facts, not inferences.
+  // debitMismatch / creditMismatch / balanceMismatch / likelyMissingTx are computed
+  // here from the numbers before Claude ever sees the data. This makes Section 1
+  // ("Missing Transactions", "Total Debits") deterministic and explainable.
+  const computedSignals = statements.map((s) => {
+    const rec = reconciliation.find((r) => r.file === s.file) || {};
+
+    const balanceMismatch =
+      s.openingBalance != null && s.closingBalance != null &&
+      s.totalDebits    != null && s.totalCredits   != null
+        ? Math.abs(s.openingBalance + s.totalCredits - s.totalDebits - s.closingBalance) > 1
+        : null;
+
+    const debitMismatch  = rec.pdfDebits  != null ? Math.abs(rec.pdfDebits  - (rec.rowDebits  || 0)) > 1  : null;
+    const creditMismatch = rec.pdfCredits != null ? Math.abs(rec.pdfCredits - (rec.rowCredits || 0)) > 1 : null;
+    const debitDiff      = rec.pdfDebits  != null ? +Math.abs(rec.pdfDebits  - (rec.rowDebits  || 0)).toFixed(2) : null;
+    const creditDiff     = rec.pdfCredits != null ? +Math.abs(rec.pdfCredits - (rec.rowCredits || 0)).toFixed(2) : null;
+
+    // likelyMissingTx: debit OR credit diff > $100 strongly suggests rows were missed
+    const likelyMissingTx = (debitMismatch || creditMismatch)
+      ? Math.max(debitDiff ?? 0, creditDiff ?? 0) > 100
+      : false;
+
+    return {
+      file: s.file,
+      balanceMismatch,
+      debitMismatch,
+      creditMismatch,
+      debitDiff,
+      creditDiff,
+      likelyMissingTx,
+    };
+  });
+
+  // Build compact context for AI — keep it tight to avoid bloat
+  const context = {
+    statements: statements.map((s) => ({
+      file:           s.file,
+      opening:        s.openingBalance,
+      closing:        s.closingBalance,
+      extractedDebits:  s.totalDebits,
+      extractedCredits: s.totalCredits,
+      txCount:        s.transactionCount,
+    })),
+    reconciliation: reconciliation.map((r) => ({
+      file:         r.file,
+      pdfDebits:    r.pdfDebits,
+      pdfCredits:   r.pdfCredits,
+      rowDebits:    r.rowDebits,
+      rowCredits:   r.rowCredits,
+      debitsMatch:  r.debitsMatch,
+      creditsMatch: r.creditsMatch,
+      debitLabel:   r.debitLabel,
+      creditLabel:  r.creditLabel,
+      error:        r.error || null,
+    })),
+    runningBalanceErrors: runningBalanceErrors.slice(0, 15),
+    dateGaps:        dateGaps,
+    amountOutliers:  amountOutliers.slice(0, 8),
+    duplicateCount:  dupeCount,
+    totalTransactions: transactions.length,
+    totalCreditsSum,
+    totalDebitsSum,
+    creditsEqualsDebits: Math.abs(totalCreditsSum - totalDebitsSum) < 1,
+    // Pre-computed deterministic signals — use these directly in validationTable rows,
+    // do NOT re-infer them from raw numbers. These are authoritative.
+    computedSignals,
+  };
+
+  const prompt = `You are a forensic accountant reviewing bank statement extraction quality for a legal case.
+
+EXTRACTION DATA:
+${JSON.stringify(context)}
+
+IMPORTANT: The "computedSignals" array contains pre-computed deterministic flags.
+Use these directly for the Missing Transactions, Total Debits, and Total Credits rows:
+- likelyMissingTx: true → "Missing Transactions" = fail
+- debitMismatch: true → "Total Debits" = fail, include debitDiff value
+- creditMismatch: true → "Total Credits" = fail, include creditDiff value
+- balanceMismatch: true → "Closing Balance Integrity" = fail
+Do NOT override these with your own inference.
+
+Generate a structured QC report. Be specific — use actual numbers from the data. No vague statements.
+Return ONLY this JSON object, no markdown, no extra text:
+
+{
+  "validationTable": [
+    {"check": "Total Credits (PDF vs Extracted)", "status": "pass|warn|fail", "details": "<pdf value> vs <extracted value> — match/mismatch"},
+    {"check": "Total Debits (PDF vs Extracted)",  "status": "pass|warn|fail", "details": "<pdf value> vs <extracted value>, diff: $X"},
+    {"check": "Credits = Debits (Sum Check)",     "status": "pass|warn|fail", "details": "Credits $X vs Debits $X — balanced/unbalanced"},
+    {"check": "Closing Balance Integrity",        "status": "pass|warn|fail", "details": "Expected $X, extracted $X"},
+    {"check": "Running Balance Integrity",        "status": "pass|warn|fail", "details": "X errors found / No errors"},
+    {"check": "Missing Transactions",             "status": "pass|warn|fail", "details": "Yes / Possible / No — reason with amounts if available"},
+    {"check": "Duplicate Transactions",           "status": "pass|warn|fail", "details": "X duplicates found / No duplicates"},
+    {"check": "Date Coverage",                    "status": "pass|warn|fail", "details": "Full / Limited — date range or gap detail"}
+  ],
+  "transactionIssues": [
+    {"row": <number or null>, "date": "<date>", "issueType": "<Running balance mismatch|Value mismatch|etc>", "expected": "<$value>", "extracted": "<$value>"}
+  ],
+  "patternInsights": [
+    "<specific observation about OCR reliability, data patterns, or extraction accuracy — cite actual values>"
+  ],
+  "riskLevel": "low|medium|high",
+  "riskExplanation": "<1-2 sentences: based on which specific mismatches or issues>",
+  "recommendations": [
+    "<specific actionable step with context from this data>"
+  ]
+}
+
+Rules:
+- validationTable: exactly 8 rows, in the order listed above
+- status "pass" = values match or no issues, "warn" = minor mismatch < $5, "fail" = significant mismatch
+- transactionIssues: populate from runningBalanceErrors only. Max 15 rows. Empty array [] if none.
+- patternInsights: 4–6 bullets. Focus on extraction reliability — cite actual dollar amounts or counts.
+- riskLevel: low = all checks pass, medium = 1-2 minor issues, high = balance mismatch or many errors
+- recommendations: 3–5 specific steps. Reference actual issues found, not generic advice.
+- If reconciliation data has an error (PDF summary not found), note that in Credits/Debits rows.
+- Return ONLY the JSON. No explanation outside it.`;
+
+  // Fix 1 — explicit try/catch around Claude call + JSON.parse.
+  // Throws a typed error; caller's Promise.all .catch() handles it cleanly.
+  let response;
+  try {
+    response = await client.messages.create({
+      model:      "claude-sonnet-4-5",
+      max_tokens: 2000,
+      messages:   [{ role: "user", content: prompt }],
+    });
+  } catch (apiErr) {
+    throw new Error(`Bank QC Claude API call failed: ${apiErr.message}`);
+  }
+
+  const raw = response.content[0]?.text?.trim().replace(/```json|```/g, "").trim();
+  if (!raw) throw new Error("Bank QC: Claude returned empty response");
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (parseErr) {
+    throw new Error(`Bank QC: Claude returned invalid JSON — ${parseErr.message}`);
+  }
+
+  // Fix 2 — validate shape before returning. If Claude drifted, return null
+  // so the UI degrades gracefully instead of crashing on missing keys.
+  return validateBankQcReport(parsed);
+}
+
+// ─────────────────────────────────────────────────────────────
+// FIX 2 — SCHEMA VALIDATION FOR BANK QC REPORT
+// Claude can occasionally omit keys or change types under load.
+// Any structural drift returns null → UI shows nothing rather than crashing.
+// ─────────────────────────────────────────────────────────────
+function validateBankQcReport(report) {
+  if (!report || typeof report !== "object") return null;
+
+  const hasTable  = Array.isArray(report.validationTable)   && report.validationTable.length  > 0;
+  const hasIssues = Array.isArray(report.transactionIssues);
+  const hasInsights = Array.isArray(report.patternInsights) && report.patternInsights.length  > 0;
+  const hasRisk   = ["low", "medium", "high"].includes(report.riskLevel);
+  const hasRecs   = Array.isArray(report.recommendations)   && report.recommendations.length  > 0;
+
+  if (!hasTable || !hasIssues || !hasInsights || !hasRisk || !hasRecs) {
+    console.error("Bank QC report failed schema validation:", {
+      hasTable, hasIssues, hasInsights, hasRisk, hasRecs,
+    });
+    return null;
+  }
+
+  // Normalise each validationTable row — ensure status is one of pass/warn/fail
+  const validStatuses = new Set(["pass", "warn", "fail"]);
+  report.validationTable = report.validationTable.map((row) => ({
+    check:   String(row.check   ?? "—"),
+    status:  validStatuses.has(row.status) ? row.status : "warn",
+    details: String(row.details ?? "—"),
+  }));
+
+  // Normalise transactionIssues rows
+  report.transactionIssues = report.transactionIssues.map((row) => ({
+    row:       row.row  ?? null,
+    date:      row.date ?? "—",
+    issueType: String(row.issueType ?? "Unknown issue"),
+    expected:  String(row.expected  ?? "—"),
+    extracted: String(row.extracted ?? "—"),
+  }));
+
+  return report;
+}
+
+// ─────────────────────────────────────────────────────────────
 // SCORE CALCULATOR
 // ─────────────────────────────────────────────────────────────
 function calculateScore(toolName, ruleFindings, aiScore) {
@@ -911,7 +1079,7 @@ function getStatus(toolName, score) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// EXPLAINABILITY — top score-impact items
+// EXPLAINABILITY
 // ─────────────────────────────────────────────────────────────
 function buildScoreBreakdown(ruleFindings) {
   const sorted = [...ruleFindings].sort((a, b) => b.sev.deduct - a.sev.deduct).slice(0, 3);
@@ -942,23 +1110,31 @@ export async function POST(req) {
     const ruleIssues   = ruleFindings.filter((f) => f.type === "issue").map((f) => f.msg);
     const ruleWarnings = ruleFindings.filter((f) => f.type === "warning").map((f) => f.msg);
 
-    // Layer 2 — AI analysis
-    let aiResult = {
+    // Layer 2 — AI analysis + bank QC report run in parallel
+    const aiDefault = {
       aiScore: 70,
       aiIssues: [],
       aiWarnings: [],
       aiRecommendations: ["Re-run QC once AI analysis is available."],
       aiSummary: "AI analysis unavailable. Rule-based checks applied only.",
     };
-    try {
-      aiResult = await runAIAnalysis(toolName, toolOutput, ruleFindings);
-    } catch (err) {
-      console.error("QC AI failed:", err.message, "| Tool:", toolName);
-    }
 
-    const finalScore   = calculateScore(toolName, ruleFindings, aiResult.aiScore);
-    const status       = getStatus(toolName, finalScore);
-    const breakdown    = buildScoreBreakdown(ruleFindings);
+    const [aiResult, bankQcReport] = await Promise.all([
+      runAIAnalysis(toolName, toolOutput, ruleFindings).catch((err) => {
+        console.error("QC AI failed:", err.message, "| Tool:", toolName);
+        return aiDefault;
+      }),
+      toolName === "extraction-bank"
+        ? runBankQcReport(enriched).catch((err) => {
+            console.error("Bank QC report failed:", err.message);
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
+
+    const finalScore = calculateScore(toolName, ruleFindings, aiResult.aiScore);
+    const status     = getStatus(toolName, finalScore);
+    const breakdown  = buildScoreBreakdown(ruleFindings);
 
     return NextResponse.json({
       status,
@@ -968,6 +1144,7 @@ export async function POST(req) {
       recommendations: aiResult.aiRecommendations || [],
       summary:         aiResult.aiSummary,
       scoreBreakdown:  breakdown,
+      bankQcReport,    // ← null for all other tools, populated only for extraction-bank
       meta: {
         toolName,
         ruleIssueCount:   ruleIssues.length,
@@ -987,6 +1164,7 @@ export async function POST(req) {
       recommendations: ["Check server logs for error details."],
       summary:         "QC could not complete due to a system error.",
       scoreBreakdown:  [],
+      bankQcReport:    null,
     });
   }
 }

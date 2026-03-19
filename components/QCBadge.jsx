@@ -25,6 +25,213 @@ const SEV_COLORS = {
   Minor:    { bg: "#fef9c3", color: "#713f12", dot: "#ca8a04" },
 };
 
+const RISK_CONFIG = {
+  low:    { emoji: "🟢", label: "Low — Data reliable",    bg: "#dcfce7", color: "#166534", border: "#86efac" },
+  medium: { emoji: "🟡", label: "Medium — Usable with caution", bg: "#fef9c3", color: "#713f12", border: "#fde047" },
+  high:   { emoji: "🔴", label: "High — Not reliable",   bg: "#fee2e2", color: "#7f1d1d", border: "#fca5a5" },
+};
+
+const CHECK_ICON = { pass: "✅", warn: "⚠️", fail: "❌" };
+
+// ── Table base styles ──────────────────────────────────────────
+const thStyle = {
+  padding: "7px 10px",
+  textAlign: "left",
+  fontWeight: 600,
+  fontSize: "11px",
+  color: "#6b7280",
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  borderBottom: "1px solid #e5e7eb",
+  whiteSpace: "nowrap",
+  background: "#f9fafb",
+};
+const tdStyle = {
+  padding: "7px 10px",
+  fontSize: "12px",
+  color: "#374151",
+  lineHeight: 1.45,
+  borderBottom: "1px solid #f3f4f6",
+};
+
+// ── Bank QC Section Components ─────────────────────────────────
+
+function SectionHeader({ emoji, title, badge }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "10px" }}>
+      <span style={{ fontSize: "13px" }}>{emoji}</span>
+      <p style={{ margin: 0, fontSize: "12px", fontWeight: 700, color: "#111827", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+        {title}
+      </p>
+      {badge && (
+        <span style={{ fontSize: "10px", fontWeight: 600, padding: "2px 7px", borderRadius: "10px", background: "#f3f4f6", color: "#6b7280" }}>
+          {badge}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ValidationTable({ table }) {
+  if (!table?.length) return null;
+  return (
+    <div style={{ marginBottom: "22px" }}>
+      <SectionHeader emoji="📋" title="Core Validation" badge="Section 1" />
+      <div style={{ borderRadius: "8px", overflow: "hidden", border: "1px solid #e5e7eb" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, width: "38%" }}>Check</th>
+              <th style={{ ...thStyle, width: "48px", textAlign: "center" }}>Status</th>
+              <th style={thStyle}>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {table.map((row, i) => {
+              const isFail = row.status === "fail";
+              const isWarn = row.status === "warn";
+              return (
+                <tr key={i} style={{ background: isFail ? "#fff8f8" : isWarn ? "#fffdf0" : "#fff" }}>
+                  <td style={{ ...tdStyle, fontWeight: 500, color: "#374151" }}>{row.check}</td>
+                  <td style={{ ...tdStyle, textAlign: "center", fontSize: "14px" }}>{CHECK_ICON[row.status] || "⚠️"}</td>
+                  <td style={{
+                    ...tdStyle,
+                    color: isFail ? "#b91c1c" : isWarn ? "#92400e" : "#16a34a",
+                    fontWeight: isFail ? 600 : 400,
+                  }}>
+                    {row.details}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function TransactionIssuesTable({ issues }) {
+  if (!issues?.length) {
+    return (
+      <div style={{ marginBottom: "22px" }}>
+        <SectionHeader emoji="🔢" title="Transaction-Level Issues" badge="Section 2" />
+        <div style={{ padding: "10px 14px", borderRadius: "8px", background: "#f0fdf4", border: "1px solid #bbf7d0", fontSize: "12px", color: "#15803d" }}>
+          ✅ No critical calculation issues detected in extracted transactions
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginBottom: "22px" }}>
+      <SectionHeader emoji="🔢" title="Transaction-Level Issues" badge={`Section 2 — ${issues.length} issue${issues.length !== 1 ? "s" : ""}`} />
+      <div style={{ borderRadius: "8px", overflow: "hidden", border: "1px solid #fecaca" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={{ ...thStyle, width: "44px" }}>Row</th>
+              <th style={{ ...thStyle, width: "90px" }}>Date</th>
+              <th style={thStyle}>Issue</th>
+              <th style={{ ...thStyle, width: "110px" }}>Expected</th>
+              <th style={{ ...thStyle, width: "110px" }}>Extracted</th>
+            </tr>
+          </thead>
+          <tbody>
+            {issues.map((row, i) => (
+              <tr key={i} style={{ background: i % 2 === 0 ? "#fff8f8" : "#fff" }}>
+                <td style={{ ...tdStyle, color: "#9ca3af", textAlign: "center" }}>{row.row ?? "—"}</td>
+                <td style={{ ...tdStyle, color: "#6b7280", whiteSpace: "nowrap" }}>{row.date ?? "—"}</td>
+                <td style={{ ...tdStyle, color: "#dc2626", fontWeight: 600 }}>{row.issueType}</td>
+                <td style={{ ...tdStyle, color: "#16a34a", fontFamily: "monospace", fontSize: "11px" }}>{row.expected}</td>
+                <td style={{ ...tdStyle, color: "#dc2626", fontFamily: "monospace", fontSize: "11px" }}>{row.extracted}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function PatternInsights({ insights }) {
+  if (!insights?.length) return null;
+  return (
+    <div style={{ marginBottom: "22px" }}>
+      <SectionHeader emoji="⚠️" title="Pattern & Risk Insights" badge="Section 3" />
+      <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+        {insights.map((insight, i) => (
+          <li key={i} style={{
+            display: "flex",
+            gap: "8px",
+            fontSize: "12px",
+            color: "#78350f",
+            background: "#fffbeb",
+            border: "1px solid #fde68a",
+            borderLeft: "3px solid #f59e0b",
+            padding: "8px 12px",
+            borderRadius: "0 6px 6px 0",
+            marginBottom: "5px",
+            lineHeight: 1.55,
+          }}>
+            <span style={{ flexShrink: 0, marginTop: "1px", color: "#d97706" }}>›</span>
+            {insight}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function RiskLevel({ level, explanation }) {
+  const cfg = RISK_CONFIG[level] || RISK_CONFIG.medium;
+  return (
+    <div style={{ marginBottom: "22px" }}>
+      <SectionHeader emoji="🚨" title="Risk Level" badge="Section 4" />
+      <div style={{ padding: "14px 16px", borderRadius: "8px", background: cfg.bg, border: `1.5px solid ${cfg.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: explanation ? "6px" : 0 }}>
+          <span style={{ fontSize: "18px", lineHeight: 1 }}>{cfg.emoji}</span>
+          <span style={{ fontSize: "14px", fontWeight: 700, color: cfg.color }}>{cfg.label}</span>
+        </div>
+        {explanation && (
+          <p style={{ margin: 0, fontSize: "12px", color: cfg.color, lineHeight: 1.6, paddingLeft: "26px", opacity: 0.9 }}>
+            {explanation}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BankRecommendations({ recommendations }) {
+  if (!recommendations?.length) return null;
+  return (
+    <div style={{ marginBottom: "22px" }}>
+      <SectionHeader emoji="💡" title="Recommendations" badge="Section 5" />
+      <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
+        {recommendations.map((rec, i) => (
+          <li key={i} style={{
+            display: "flex",
+            gap: "10px",
+            fontSize: "12px",
+            color: "#1e3a5f",
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            marginBottom: "5px",
+            lineHeight: 1.55,
+          }}>
+            <span style={{ flexShrink: 0, fontWeight: 700, color: "#2563eb", minWidth: "16px" }}>{i + 1}.</span>
+            {rec}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+// ── Shared Components (unchanged) ─────────────────────────────
+
 function ScoreBar({ score, color }) {
   return (
     <div style={{ height: "6px", borderRadius: "3px", background: "#e5e7eb", overflow: "hidden", marginTop: "6px" }}>
@@ -51,7 +258,6 @@ function Section({ title, items, textColor, bgColor, icon }) {
   );
 }
 
-// Score breakdown panel — shows top 3 things that hurt the score
 function ScoreBreakdown({ breakdown }) {
   if (!breakdown || breakdown.length === 0) return null;
   return (
@@ -76,12 +282,14 @@ function ScoreBreakdown({ breakdown }) {
   );
 }
 
+// ── Main Component ─────────────────────────────────────────────
+
 export default function QCBadge({ toolName, toolOutput, metadata }) {
   const [qcResult, setQcResult] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading]   = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [error, setError] = useState(null);
-  const [hasRun, setHasRun] = useState(false);
+  const [error, setError]       = useState(null);
+  const [hasRun, setHasRun]     = useState(false);
 
   async function handleRunQC() {
     setLoading(true);
@@ -90,7 +298,17 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
       const response = await fetch("/api/agent/qc", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toolName, toolOutput, metadata }),
+        body: JSON.stringify({
+          toolName,
+          toolOutput,
+          // Fix 4 — metadata fallback: reconciliation is required for Section 1 of the
+          // bank QC report. If the caller didn't pass it, default to null so the backend
+          // gracefully skips those comparisons instead of crashing on undefined.
+          metadata: {
+            reconciliation: metadata?.reconciliation ?? null,
+            ...(metadata || {}),
+          },
+        }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
       const data = await response.json();
@@ -104,8 +322,10 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
     }
   }
 
-  const cfg = qcResult ? STATUS_CONFIG[qcResult.status] : null;
-  const toolLabel = TOOL_LABELS[toolName] || toolName;
+  const cfg        = qcResult ? STATUS_CONFIG[qcResult.status] : null;
+  const toolLabel  = TOOL_LABELS[toolName] || toolName;
+  const isBank     = toolName === "extraction-bank";
+  const bankReport = qcResult?.bankQcReport;
 
   return (
     <>
@@ -116,7 +336,7 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
             onClick={handleRunQC}
             style={{ display: "inline-flex", alignItems: "center", gap: "6px", padding: "8px 18px", borderRadius: "8px", border: "1.5px solid #d1d5db", background: "#f9fafb", color: "#374151", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
             onMouseOver={(e) => { e.currentTarget.style.borderColor = "#1a3c6e"; e.currentTarget.style.color = "#1a3c6e"; e.currentTarget.style.background = "#f0f4ff"; }}
-            onMouseOut={(e) => { e.currentTarget.style.borderColor = "#d1d5db"; e.currentTarget.style.color = "#374151"; e.currentTarget.style.background = "#f9fafb"; }}
+            onMouseOut={(e)  => { e.currentTarget.style.borderColor = "#d1d5db"; e.currentTarget.style.color = "#374151"; e.currentTarget.style.background = "#f9fafb"; }}
           >
             🔍 Run QC Check
           </button>
@@ -153,7 +373,18 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
       {modalOpen && qcResult && cfg && (
         <>
           <div onClick={() => setModalOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 998 }} />
-          <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 999, background: "#ffffff", borderRadius: "16px", padding: "28px 28px 24px", width: "min(540px, 92vw)", maxHeight: "82vh", overflowY: "auto", boxShadow: "0 30px 80px rgba(0,0,0,0.28)" }}>
+          <div style={{
+            position: "fixed", top: "50%", left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 999,
+            background: "#ffffff",
+            borderRadius: "16px",
+            padding: "28px 28px 24px",
+            width: "min(620px, 94vw)",
+            maxHeight: "86vh",
+            overflowY: "auto",
+            boxShadow: "0 30px 80px rgba(0,0,0,0.28)",
+          }}>
 
             {/* Header */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px" }}>
@@ -183,7 +414,7 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
             {/* Meta pills */}
             <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "20px" }}>
               {[
-                { label: `${qcResult.meta?.ruleIssueCount ?? 0} rule issues`,   color: (qcResult.meta?.ruleIssueCount ?? 0) > 0 ? "#dc2626" : "#16a34a" },
+                { label: `${qcResult.meta?.ruleIssueCount ?? 0} rule issues`,   color: (qcResult.meta?.ruleIssueCount ?? 0)   > 0 ? "#dc2626" : "#16a34a" },
                 { label: `${qcResult.meta?.ruleWarningCount ?? 0} warnings`,    color: (qcResult.meta?.ruleWarningCount ?? 0) > 0 ? "#ca8a04" : "#16a34a" },
                 { label: `AI score: ${qcResult.meta?.aiScore ?? "—"}`,          color: "#374151" },
               ].map((pill, i) => (
@@ -191,10 +422,29 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
               ))}
             </div>
 
-            {/* Score breakdown — explainability */}
+            {/* Score breakdown */}
             <ScoreBreakdown breakdown={qcResult.scoreBreakdown} />
 
-            {/* Issues / Warnings / Recommendations */}
+            {/* ── BANK EXTRACTION ONLY: 5 structured sections ── */}
+            {isBank && bankReport && (
+              <>
+                <ValidationTable      table={bankReport.validationTable} />
+                <TransactionIssuesTable issues={bankReport.transactionIssues} />
+                <PatternInsights      insights={bankReport.patternInsights} />
+                <RiskLevel            level={bankReport.riskLevel} explanation={bankReport.riskExplanation} />
+                <BankRecommendations  recommendations={bankReport.recommendations} />
+                {/* Divider before AI Extraction Verification */}
+                <div style={{ borderTop: "1px solid #e5e7eb", margin: "6px 0 18px" }} />
+              </>
+            )}
+
+            {/* ── AI Extraction Verification (unchanged for all tools) ── */}
+            {isBank && (
+              <p style={{ margin: "0 0 14px", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                AI Extraction Verification
+              </p>
+            )}
+
             <Section title="Issues"          items={qcResult.issues}          textColor="#dc2626" bgColor="#fef2f2" icon="❌" />
             <Section title="Warnings"        items={qcResult.warnings}        textColor="#d97706" bgColor="#fffbeb" icon="⚠️" />
             <Section title="Recommendations" items={qcResult.recommendations} textColor="#2563eb" bgColor="#eff6ff" icon="💡" />
