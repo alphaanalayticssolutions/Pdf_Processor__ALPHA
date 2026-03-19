@@ -148,6 +148,8 @@ Rules:
       file:         fileName,
       pdfDebits,
       pdfCredits,
+      debitItems,   // full array — used for category-level gap detection in QC
+      creditItems,  // full array
       debitLabel:   debitItems.map(i  => i.label).join(' + ') || 'Total Debits',
       creditLabel:  creditItems.map(i => i.label).join(' + ') || 'Total Credits',
       rowDebits:    +rowDebits.toFixed(2),

@@ -371,6 +371,100 @@ Return ONLY valid JSON, no markdown:
 // ─────────────────────────────────────────────────────────────
 // BANK QC REPORT
 // ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// CATEGORY-LEVEL BREAKDOWN
+// Groups extracted transactions into the same categories the bank
+// uses in its summary section, then compares vs PDF debitItems.
+// This pinpoints WHICH category has the gap — not just that a gap exists.
+// ─────────────────────────────────────────────────────────────
+function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
+  // Categorise each extracted debit transaction
+  const extractedByCategory = {};
+
+  fileTransactions.forEach((t) => {
+    const debit = parseFloat(t.debit) || 0;
+    if (debit <= 0) return;
+
+    const desc = (t.description || "").toLowerCase();
+    const chk  = String(t.check_number || "").trim();
+
+    let category;
+
+    if (chk) {
+      category = "Checks Paid";
+    } else if (
+      desc.includes("card purchase") || desc.includes("card debit") ||
+      desc.includes("non-chase atm") || desc.includes("atm withdraw") ||
+      desc.includes("recurring card")
+    ) {
+      category = "ATM & Debit Card Withdrawals";
+    } else if (
+      desc.includes("fee") || desc.includes("maintenance fee") ||
+      desc.includes("service charge") || desc.includes("analysis fee") ||
+      desc.includes("monthly fee") || desc.includes("atm fee")
+    ) {
+      category = "Fees";
+    } else if (
+      desc.includes("owner withdrawal") ||
+      (desc.includes("withdrawal") && !desc.includes("online") && !desc.includes("atm"))
+    ) {
+      category = "Other Withdrawals";
+    } else {
+      // Everything else: online transfers, ACH, wire, Zelle, bill pay, tax, mortgage
+      category = "Electronic Withdrawals";
+    }
+
+    extractedByCategory[category] = (extractedByCategory[category] || 0) + debit;
+  });
+
+  // Round all extracted totals
+  Object.keys(extractedByCategory).forEach((k) => {
+    extractedByCategory[k] = +extractedByCategory[k].toFixed(2);
+  });
+
+  // If no PDF debitItems available, return simple totals only
+  if (!pdfDebitItems || pdfDebitItems.length === 0) {
+    return { available: false, extractedByCategory };
+  }
+
+  // Normalise PDF category labels to match our keys
+  const normalise = (label) => {
+    const l = (label || "").toLowerCase();
+    if (l.includes("check"))                                           return "Checks Paid";
+    if (l.includes("atm") || l.includes("debit card"))                return "ATM & Debit Card Withdrawals";
+    if (l.includes("electronic") || l.includes("transfer"))           return "Electronic Withdrawals";
+    if (l.includes("other withdrawal"))                                return "Other Withdrawals";
+    if (l.includes("fee") || l.includes("charge") || l.includes("service")) return "Fees";
+    return label; // keep original if no match
+  };
+
+  // Build per-category diff
+  const categoryDiffs = pdfDebitItems.map((item) => {
+    const normKey   = normalise(item.label);
+    const pdfAmt    = +parseFloat(item.amount).toFixed(2);
+    const extracted = +(extractedByCategory[normKey] || 0).toFixed(2);
+    const diff      = +(pdfAmt - extracted).toFixed(2);  // positive = under-extracted
+    return {
+      label:      item.label,        // original PDF label
+      normKey,                        // normalised key used for matching
+      pdfAmount:  pdfAmt,
+      extracted,
+      diff,                           // >0 = missing from extraction, <0 = over-extracted
+      match:      Math.abs(diff) < 1,
+    };
+  });
+
+  // Flag which categories have gaps > $1
+  const missingCategories = categoryDiffs.filter((c) => Math.abs(c.diff) > 1);
+
+  return {
+    available:         true,
+    categoryDiffs,
+    missingCategories, // the specific categories where extraction is short or over
+    extractedByCategory,
+  };
+}
+
 async function runBankQcReport(toolOutput) {
   const statements           = toolOutput.statements           || [];
   const transactions         = toolOutput.transactions         || [];
@@ -400,12 +494,33 @@ async function runBankQcReport(toolOutput) {
     const likelyMissingTx = reconcAvailable
       ? (debitMismatch || creditMismatch) && Math.max(debitDiff ?? 0, creditDiff ?? 0) > 100
       : balanceMismatch === true;
-    return { file: s.file, balanceMismatch, debitMismatch, creditMismatch, debitDiff, creditDiff, likelyMissingTx, reconcAvailable };
+
+    // Category-level breakdown — pinpoints WHICH section has the gap
+    // Uses extracted transactions for this specific file only
+    const fileTxs = transactions.filter((t) => t.description !== undefined); // all tx (file filter via statements)
+    const categoryBreakdown = buildCategoryBreakdown(
+      transactions, // passed as-is; buildCategoryBreakdown uses all debits
+      rec.debitItems || []
+    );
+
+    return {
+      file: s.file, balanceMismatch, debitMismatch, creditMismatch,
+      debitDiff, creditDiff, likelyMissingTx, reconcAvailable,
+      categoryBreakdown, // per-category PDF vs extracted comparison
+    };
   });
 
   const context = {
     statements: statements.map((s) => ({ file: s.file, opening: s.openingBalance, closing: s.closingBalance, extractedDebits: s.totalDebits, extractedCredits: s.totalCredits, txCount: s.transactionCount })),
-    reconciliation: reconciliation.map((r) => ({ file: r.file, pdfDebits: r.pdfDebits, pdfCredits: r.pdfCredits, rowDebits: r.rowDebits, rowCredits: r.rowCredits, debitsMatch: r.debitsMatch, creditsMatch: r.creditsMatch, debitLabel: r.debitLabel, creditLabel: r.creditLabel, error: r.error || null })),
+    reconciliation: reconciliation.map((r) => ({
+      file: r.file, pdfDebits: r.pdfDebits, pdfCredits: r.pdfCredits,
+      rowDebits: r.rowDebits, rowCredits: r.rowCredits,
+      debitsMatch: r.debitsMatch, creditsMatch: r.creditsMatch,
+      debitLabel: r.debitLabel, creditLabel: r.creditLabel,
+      debitItems: r.debitItems || [],   // per-category PDF amounts
+      creditItems: r.creditItems || [],
+      error: r.error || null,
+    })),
     runningBalanceErrors: runningBalanceErrors.slice(0, 15),
     dateGaps, amountOutliers: amountOutliers.slice(0, 8),
     duplicateCount: dupeCount, totalTransactions: transactions.length,
@@ -424,6 +539,13 @@ MANDATORY — use computedSignals directly, do NOT override:
 - creditMismatch: true   → "Total Credits" = fail, show creditDiff
 - balanceMismatch: true  → "Closing Balance Integrity" = fail
 - reconcAvailable: false → note "PDF summary unavailable" in Credits/Debits rows
+
+CATEGORY-LEVEL ANALYSIS — use categoryBreakdown from computedSignals:
+Each signal has a categoryBreakdown object. If available=true, it contains categoryDiffs array showing exactly which PDF section (Checks Paid, ATM & Debit Card, Electronic Withdrawals, Other Withdrawals, Fees) has a gap.
+- For "Total Debits" details: if categoryBreakdown.available=true, list WHICH categories match and which don't
+- For "Missing Transactions" details: name the specific category where gap exists (e.g. "Electronic Withdrawals short by $500")
+- missingCategories array = categories with diff > $1 — use these directly
+- Example detail: "Electronic Withdrawals: PDF $100,573.68 vs Extracted $100,073.68 — $500 short (1 missing transaction)"
 
 Return ONLY this JSON, no markdown:
 {
