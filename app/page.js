@@ -16,10 +16,10 @@ const COMPANY_DOMAIN = '@alphaanalyticssol.com';
 // LOGIN PAGE
 // ─────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [email, setEmail]     = useState('');
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError]     = useState('');
-  const [loading, setLoading] = useState(false);
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
   const [showPass, setShowPass] = useState(false);
 
   const handleLogin = () => {
@@ -112,15 +112,16 @@ export default function Home() {
   if (!loggedIn) return <LoginPage onLogin={handleLogin} />;
 
   const tools = [
-    { id: 'duplicate',            step: 1, icon: '📊', title: 'Duplicate Report',        desc: 'Scan folder → Find duplicates using SHA-256 hash → Download Excel report',                                active: true  },
-    { id: 'splitter',             step: 2, icon: '✂️', title: 'PDF Splitter',             desc: 'Split bank statements, invoices & tax filings — manually or let AI decide',                              active: true  },
-    { id: 'categorise',           step: 3, icon: '📂', title: 'Categorisation',           desc: 'Upload mixed documents → AI sorts them into category folders automatically',                              active: true  },
-    { id: 'stamping',             step: 4, icon: '📄', title: 'Bates Stamping',           desc: 'Upload folder → AI detects empty corner → Stamps every page sequentially',                               active: true  },
-    { id: 'extraction',           step: 5, icon: '🔍', title: 'Extraction',               desc: 'Extract data from Invoices, Bank Statements & Tax documents into Excel',                                 active: true  },
-    { id: 'tracker',              step: 6, icon: '📋', title: 'Statement Tracker',        desc: 'Upload Bank & Credit Card extraction Excels → AI generates unified month-wise tracker',                  active: true  },
-    { id: 'desc-categoriser',     step: 7, icon: '🏷️', title: 'Description Categoriser', desc: 'Upload Excel with distinct descriptions → AI categorises each → Download Excel',                         active: true  },
-    { id: 'transaction-analysis', step: 8, icon: '📈', title: 'Transaction Analysis',     desc: 'Upload CSV/Excel → Account × Month pivot table → Heatmap Excel output',                                 active: true  },
-    { id: 'indexing',             step: 9, icon: '📁', title: 'Indexing',                 desc: 'Coming soon — Auto-organize files with AI-generated index',                                              active: false },
+    { id: 'duplicate',            step: 1,  icon: '📊', title: 'Duplicate Report',        desc: 'Scan folder → Find duplicates using SHA-256 hash → Download Excel report',                                active: true  },
+    { id: 'splitter',             step: 2,  icon: '✂️', title: 'PDF Splitter',             desc: 'Split bank statements, invoices & tax filings — manually or let AI decide',                              active: true  },
+    { id: 'categorise',           step: 3,  icon: '📂', title: 'Categorisation',           desc: 'Upload mixed documents → AI sorts them into category folders automatically',                              active: true  },
+    { id: 'stamping',             step: 4,  icon: '📄', title: 'Bates Stamping',           desc: 'Upload folder → AI detects empty corner → Stamps every page sequentially',                               active: true  },
+    { id: 'extraction',           step: 5,  icon: '🔍', title: 'Extraction',               desc: 'Extract data from Invoices, Bank Statements & Tax documents into Excel',                                 active: true  },
+    { id: 'tracker',              step: 6,  icon: '📋', title: 'Statement Tracker',        desc: 'Upload Bank & Credit Card extraction Excels → AI generates unified month-wise tracker',                  active: true  },
+    { id: 'desc-categoriser',     step: 7,  icon: '🏷️', title: 'Description Categoriser', desc: 'Upload Excel with distinct descriptions → AI categorises each → Download Excel',                         active: true  },
+    { id: 'transaction-analysis', step: 8,  icon: '📈', title: 'Transaction Analysis',     desc: 'Upload CSV/Excel → Account × Month pivot table → Heatmap Excel output',                                 active: true  },
+    { id: 'qc-bank',              step: 9,  icon: '🔬', title: 'QC Bank Extraction',       desc: 'Upload Excel + PDF(s) → Validate extraction accuracy → Full audit-ready QC report',                     active: true  },
+    { id: 'indexing',             step: 10, icon: '📁', title: 'Indexing',                 desc: 'Coming soon — Auto-organize files with AI-generated index',                                              active: false },
   ];
 
   return (
@@ -146,7 +147,7 @@ export default function Home() {
 
       {!activeTool && (
         <div style={{ background: 'white', borderBottom: '1px solid #eee', padding: '14px 20px', overflowX: 'auto' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', maxWidth: '1200px', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', maxWidth: '1400px', margin: '0 auto' }}>
             {tools.filter(t => t.active).map((t, i, arr) => (
               <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: '#f0f4ff', border: '1px solid #dce6ff' }}>
@@ -184,6 +185,7 @@ export default function Home() {
         {activeTool === 'tracker'              && <StatementTrackerTool       onBack={() => setActiveTool(null)} />}
         {activeTool === 'desc-categoriser'     && <DescriptionCategoriserTool onBack={() => setActiveTool(null)} />}
         {activeTool === 'transaction-analysis' && <TransactionAnalysisTool    onBack={() => setActiveTool(null)} />}
+        {activeTool === 'qc-bank'              && <QCBankExtractionTool       onBack={() => setActiveTool(null)} />}
       </div>
 
       <div style={{ textAlign: 'center', padding: '20px', color: '#ccc', fontSize: '11px', letterSpacing: '1px' }}>
@@ -252,20 +254,9 @@ function TransactionAnalysisTool({ onBack }) {
         { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
       );
       const url = URL.createObjectURL(blob);
-      setResult({
-        url,
-        fileName: data.fileName || 'Transaction_Analysis.xlsx',
-        qcData: data.qcData || {
-          fileCount: selectedFiles.length,
-          accounts: [],
-          flaggedTransfers: [],
-        },
-      });
-    } catch (err) {
-      setError(err.message || 'Something went wrong.');
-    } finally {
-      setLoading(false);
-    }
+      setResult({ url, fileName: data.fileName || 'Transaction_Analysis.xlsx', qcData: data.qcData || { fileCount: selectedFiles.length, accounts: [], flaggedTransfers: [] } });
+    } catch (err) { setError(err.message || 'Something went wrong.'); }
+    finally { setLoading(false); }
   };
 
   const handleDownload = () => {
@@ -288,7 +279,6 @@ function TransactionAnalysisTool({ onBack }) {
         <span style={{ background: '#f0f4ff', border: '1px solid #c7d2fe', color: '#4338ca', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '700' }}>🤖 AI-Powered</span>
       </div>
       <p style={{ color: '#888', fontSize: '13px', marginBottom: '24px' }}>Upload a transaction dataset → Claude AI detects columns & builds pivot → Heatmap + AI insight report in Excel</p>
-
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
           <span style={{ fontSize: '28px' }}>📁</span>
@@ -303,15 +293,12 @@ function TransactionAnalysisTool({ onBack }) {
           <input type="file" multiple accept=".csv,.xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
         </label>
       </div>
-
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>📊 Select files ({selectedFiles.length} of {allFiles.length} selected)</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
-                {allChecked ? 'Deselect All' : 'Select All'}
-              </button>
+              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{allChecked ? 'Deselect All' : 'Select All'}</button>
               <button onClick={clearAll} style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Clear</button>
             </div>
           </div>
@@ -332,24 +319,19 @@ function TransactionAnalysisTool({ onBack }) {
           {!someChecked && <p style={{ color: '#cc0000', fontSize: '12px', marginTop: '6px' }}>⚠️ Please select at least one file.</p>}
         </div>
       )}
-
       {error && <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>❌ {error}</div>}
-
       <button onClick={handleAnalyse} disabled={loading || selectedFiles.length === 0}
         style={{ width: '100%', padding: '14px', background: loading || selectedFiles.length === 0 ? '#ccc' : '#0f2444', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: loading || selectedFiles.length === 0 ? 'not-allowed' : 'pointer', marginBottom: '16px' }}>
         {loading ? '⏳ Building pivot & heatmap...' : '📈 Generate Transaction Analysis'}
       </button>
-
       {result && (
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 16px' }}>✅ Analysis Ready!</p>
-          <button onClick={handleDownload}
-            style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', marginBottom: '10px' }}>
+          <button onClick={handleDownload} style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', marginBottom: '10px' }}>
             📥 Download Transaction_Analysis.xlsx
           </button>
           <QCBadge toolName="transaction-analysis" toolOutput={result.qcData} metadata={{}} />
-          <button onClick={handleClear}
-            style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
+          <button onClick={handleClear} style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
             ↺ Analyse Another File
           </button>
         </div>
@@ -369,32 +351,17 @@ function StatementTrackerTool({ onBack }) {
   const [result, setResult]     = useState(null);
 
   const loadFiles = (fileList) => {
-    const excels = Array.from(fileList).filter(f =>
-      (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')) && f.size > 0
-    );
-    setAllFiles(prev => {
-      const existing = new Map(prev.map(f => [f.name, f]));
-      excels.forEach(f => existing.set(f.name, f));
-      return Array.from(existing.values());
-    });
-    setSelected(prev => {
-      const updated = { ...prev };
-      excels.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
-      return updated;
-    });
+    const excels = Array.from(fileList).filter(f => (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')) && f.size > 0);
+    setAllFiles(prev => { const m = new Map(prev.map(f => [f.name, f])); excels.forEach(f => m.set(f.name, f)); return Array.from(m.values()); });
+    setSelected(prev => { const u = { ...prev }; excels.forEach(f => { if (!(f.name in u)) u[f.name] = true; }); return u; });
     setResult(null); setError('');
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
   const handleFileSelect   = (e) => loadFiles(e.target.files);
   const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll  = () => {
-    const allChecked = allFiles.every(f => selected[f.name]);
-    const sel = {};
-    allFiles.forEach(f => sel[f.name] = !allChecked);
-    setSelected(sel);
-  };
-  const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
+  const toggleAll  = () => { const a = allFiles.every(f => selected[f.name]); const s = {}; allFiles.forEach(f => s[f.name] = !a); setSelected(s); };
+  const clearAll   = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
   const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
@@ -431,7 +398,6 @@ function StatementTrackerTool({ onBack }) {
         <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>📋 Statement Tracker</h2>
       </div>
       <p style={{ color: '#888', fontSize: '13px', marginBottom: '24px' }}>Upload Bank Statement or Credit Card extraction Excels → AI normalizes data → Unified month-wise tracker generated</p>
-
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
           <span style={{ fontSize: '28px' }}>📁</span>
@@ -444,15 +410,12 @@ function StatementTrackerTool({ onBack }) {
           <input type="file" multiple accept=".xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
         </label>
       </div>
-
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>Select files ({selectedFiles.length} of {allFiles.length})</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
-                {allChecked ? 'Deselect All' : 'Select All'}
-              </button>
+              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{allChecked ? 'Deselect All' : 'Select All'}</button>
               <button onClick={clearAll} style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Clear</button>
             </div>
           </div>
@@ -471,14 +434,11 @@ function StatementTrackerTool({ onBack }) {
           {!someChecked && <p style={{ color: '#cc0000', fontSize: '12px', marginTop: '6px' }}>⚠️ Please select at least one file.</p>}
         </div>
       )}
-
       {error && <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>❌ {error}</div>}
-
       <button onClick={handleGenerate} disabled={loading || selectedFiles.length === 0}
         style={{ width: '100%', padding: '14px', background: loading || selectedFiles.length === 0 ? '#ccc' : '#0f2444', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: loading || selectedFiles.length === 0 ? 'not-allowed' : 'pointer', marginBottom: '20px' }}>
         {loading ? '⏳ Generating tracker...' : `📋 Generate Tracker${selectedFiles.length > 0 ? ` (${selectedFiles.length} files)` : ''}`}
       </button>
-
       {result && (
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 16px' }}>✅ Tracker Generated!</p>
@@ -497,31 +457,14 @@ function StatementTrackerTool({ onBack }) {
             </div>
             <div style={{ background: result.totalGaps > 0 ? '#FFEBEE' : 'white', border: result.totalGaps > 0 ? '2px solid #ef5350' : '1px solid #eee', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
               <div style={{ fontSize: '24px', fontWeight: '800', color: result.totalGaps > 0 ? '#C62828' : '#888' }}>{result.totalGaps ?? 0}</div>
-              <div style={{ color: result.totalGaps > 0 ? '#C62828' : '#888', fontSize: '11px', fontWeight: result.totalGaps > 0 ? '700' : '400', marginTop: '2px' }}>
-                {result.totalGaps > 0 ? '⚠️ Gaps' : 'Gaps (None)'}
-              </div>
+              <div style={{ color: result.totalGaps > 0 ? '#C62828' : '#888', fontSize: '11px', fontWeight: result.totalGaps > 0 ? '700' : '400', marginTop: '2px' }}>{result.totalGaps > 0 ? '⚠️ Gaps' : 'Gaps (None)'}</div>
             </div>
           </div>
-          <button onClick={handleDownload}
-            style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
+          <button onClick={handleDownload} style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Statement Tracker (.xlsx)
           </button>
-          <QCBadge
-            toolName="tracker"
-            toolOutput={{
-              gaps:               result.totalGaps         || 0,
-              totalMonths:        result.totalMonths        || 0,
-              totalBankAccounts:  result.totalBankAccounts  || 0,
-              totalCreditCards:   result.totalCreditCards   || 0,
-              missingMonths:      result.missingMonths      || [],
-              duplicateAccounts:  result.duplicateAccounts  || [],
-            }}
-            metadata={{}}
-          />
-          <button onClick={clearAll}
-            style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
-            ↺ Upload Another Set
-          </button>
+          <QCBadge toolName="tracker" toolOutput={{ gaps: result.totalGaps||0, totalMonths: result.totalMonths||0, totalBankAccounts: result.totalBankAccounts||0, totalCreditCards: result.totalCreditCards||0, missingMonths: result.missingMonths||[], duplicateAccounts: result.duplicateAccounts||[] }} metadata={{}} />
+          <button onClick={clearAll} style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>↺ Upload Another Set</button>
         </div>
       )}
     </div>
@@ -541,32 +484,17 @@ function DescriptionCategoriserTool({ onBack }) {
   const [done, setDone]         = useState(false);
 
   const loadFiles = (fileList) => {
-    const excels = Array.from(fileList).filter(f =>
-      (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')) && f.size > 0
-    );
-    setAllFiles(prev => {
-      const existing = new Map(prev.map(f => [f.name, f]));
-      excels.forEach(f => existing.set(f.name, f));
-      return Array.from(existing.values());
-    });
-    setSelected(prev => {
-      const updated = { ...prev };
-      excels.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
-      return updated;
-    });
+    const excels = Array.from(fileList).filter(f => (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')) && f.size > 0);
+    setAllFiles(prev => { const m = new Map(prev.map(f => [f.name, f])); excels.forEach(f => m.set(f.name, f)); return Array.from(m.values()); });
+    setSelected(prev => { const u = { ...prev }; excels.forEach(f => { if (!(f.name in u)) u[f.name] = true; }); return u; });
     setResults([]); setDone(false); setError('');
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
   const handleFileSelect   = (e) => loadFiles(e.target.files);
   const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll  = () => {
-    const allChecked = allFiles.every(f => selected[f.name]);
-    const sel = {};
-    allFiles.forEach(f => sel[f.name] = !allChecked);
-    setSelected(sel);
-  };
-  const clearAll = () => { setAllFiles([]); setSelected({}); setResults([]); setDone(false); setError(''); };
+  const toggleAll  = () => { const a = allFiles.every(f => selected[f.name]); const s = {}; allFiles.forEach(f => s[f.name] = !a); setSelected(s); };
+  const clearAll   = () => { setAllFiles([]); setSelected({}); setResults([]); setDone(false); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
   const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
@@ -597,30 +525,19 @@ function DescriptionCategoriserTool({ onBack }) {
           const rows  = XLSX.utils.sheet_to_json(sheet, { defval: '' });
           for (const row of rows) {
             const key = Object.keys(row).find(k => k.trim().toLowerCase() === 'description');
-            if (key && row[key] && String(row[key]).trim() !== '') {
-              allDescriptions.add(String(row[key]).trim());
-            }
+            if (key && row[key] && String(row[key]).trim() !== '') allDescriptions.add(String(row[key]).trim());
           }
         }
       }
       if (allDescriptions.size === 0) throw new Error('No "Description" column found.');
       const descArray = [...allDescriptions];
       setProgress(`Categorising ${descArray.length} descriptions...`);
-      const res  = await fetch('/api/categorise-descriptions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ descriptions: descArray }),
-      });
+      const res  = await fetch('/api/categorise-descriptions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ descriptions: descArray }) });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Categorisation failed');
-      setResults(data.results);
-      setDone(true);
-      setProgress('');
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      setResults(data.results); setDone(true); setProgress('');
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
 
   const downloadCSV = () => {
@@ -641,7 +558,6 @@ function DescriptionCategoriserTool({ onBack }) {
         <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>🏷️ Description Categoriser</h2>
       </div>
       <p style={{ color: '#888', fontSize: '13px', marginBottom: '24px' }}>Upload Excel files with a <strong>Description</strong> column → AI categorises each → Download CSV</p>
-
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
           <span style={{ fontSize: '28px' }}>📁</span>
@@ -654,15 +570,12 @@ function DescriptionCategoriserTool({ onBack }) {
           <input type="file" multiple accept=".xlsx,.xls" onChange={handleFileSelect} style={{ display: 'none' }} />
         </label>
       </div>
-
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>Select files ({selectedFiles.length} of {allFiles.length})</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
-                {allChecked ? 'Deselect All' : 'Select All'}
-              </button>
+              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{allChecked ? 'Deselect All' : 'Select All'}</button>
               <button onClick={clearAll} style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Clear</button>
             </div>
           </div>
@@ -681,31 +594,18 @@ function DescriptionCategoriserTool({ onBack }) {
           {!someChecked && <p style={{ color: '#cc0000', fontSize: '12px', marginTop: '6px' }}>⚠️ Please select at least one file.</p>}
         </div>
       )}
-
       {error && <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>❌ {error}</div>}
-
       <button onClick={handleCategorise} disabled={loading || selectedFiles.length === 0}
         style={{ width: '100%', padding: '14px', background: loading || selectedFiles.length === 0 ? '#ccc' : '#0f2444', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: loading || selectedFiles.length === 0 ? 'not-allowed' : 'pointer', marginBottom: '20px' }}>
         {loading ? `⏳ ${progress || 'Processing...'}` : `🏷️ Categorise${selectedFiles.length > 0 ? ` (${selectedFiles.length} files)` : ''}`}
       </button>
-
       {done && results.length > 0 && (
         <div style={{ background: '#f0fff4', border: '2px solid #38a169', borderRadius: '10px', padding: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0' }}>✅ {results.length} descriptions categorised!</p>
-            <button onClick={downloadCSV}
-              style={{ padding: '10px 20px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>
-              ⬇ Download CSV
-            </button>
+            <button onClick={downloadCSV} style={{ padding: '10px 20px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '14px' }}>⬇ Download CSV</button>
           </div>
-          <QCBadge
-            toolName="desc-categoriser"
-            toolOutput={{
-              descriptions:      results.map(r => ({ description: r.description, category: r.category, confidence: r.confidence || null })),
-              semanticMismatches: [],
-            }}
-            metadata={{}}
-          />
+          <QCBadge toolName="desc-categoriser" toolOutput={{ descriptions: results.map(r => ({ description: r.description, category: r.category, confidence: r.confidence || null })), semanticMismatches: [] }} metadata={{}} />
           <div style={{ border: '1px solid #86efac', borderRadius: '8px', overflow: 'hidden', maxHeight: '320px', overflowY: 'auto', marginTop: '16px' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
               <thead style={{ position: 'sticky', top: 0 }}>
@@ -728,10 +628,7 @@ function DescriptionCategoriserTool({ onBack }) {
               </tbody>
             </table>
           </div>
-          <button onClick={clearAll}
-            style={{ width: '100%', marginTop: '14px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
-            ↺ Upload Another File
-          </button>
+          <button onClick={clearAll} style={{ width: '100%', marginTop: '14px', padding: '10px', background: 'transparent', border: '1px solid #86efac', borderRadius: '8px', color: '#166534', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>↺ Upload Another File</button>
         </div>
       )}
     </div>
@@ -739,7 +636,7 @@ function DescriptionCategoriserTool({ onBack }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// DUPLICATE REPORT TOOL  (no QC — no AI involved)
+// DUPLICATE REPORT TOOL
 // ─────────────────────────────────────────────────────────────
 function DuplicateTool({ onBack }) {
   const [files, setFiles]           = useState([]);
@@ -747,10 +644,7 @@ function DuplicateTool({ onBack }) {
   const [result, setResult]         = useState(null);
   const [error, setError]           = useState('');
 
-  const handleFolderSelect = (e) => {
-    setFiles(Array.from(e.target.files).filter(f => f.size > 0 && !f.name.startsWith('.')));
-    setResult(null); setError('');
-  };
+  const handleFolderSelect = (e) => { setFiles(Array.from(e.target.files).filter(f => f.size > 0 && !f.name.startsWith('.'))); setResult(null); setError(''); };
 
   const hashFile = async (file) => {
     const buffer     = await file.arrayBuffer();
@@ -764,9 +658,8 @@ function DuplicateTool({ onBack }) {
     try {
       const fileData = [], hashMap = {};
       for (const file of files) {
-        const hash   = await hashFile(file);
-        const sizeKB = (file.size / 1024).toFixed(2);
-        fileData.push({ fileName: file.name, hash, sizeKB });
+        const hash = await hashFile(file);
+        fileData.push({ fileName: file.name, hash, sizeKB: (file.size / 1024).toFixed(2) });
         if (!hashMap[hash]) hashMap[hash] = [];
         hashMap[hash].push(file.name);
       }
@@ -816,8 +709,7 @@ function DuplicateTool({ onBack }) {
               </div>
             ))}
           </div>
-          <button onClick={() => downloadExcel(result.excelFile)}
-            style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
+          <button onClick={() => downloadExcel(result.excelFile)} style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Excel Report
           </button>
         </div>
@@ -916,18 +808,10 @@ function SplitterTool({ onBack }) {
               <p key={i} style={{ color: '#555', fontSize: '13px', margin: '4px 0' }}>• {doc.name} ({doc.pages} pages)</p>
             ))}
           </div>
-          <button onClick={() => downloadZip(result.zipFile)}
-            style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
+          <button onClick={() => downloadZip(result.zipFile)} style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Split Documents (ZIP)
           </button>
-          <QCBadge
-            toolName="splitter"
-            toolOutput={{
-              splits:     result.documents.map(d => ({ name: d.name, pageCount: d.pages })),
-              totalPages: result.totalPages || 0,
-            }}
-            metadata={{}}
-          />
+          <QCBadge toolName="splitter" toolOutput={{ splits: result.documents.map(d => ({ name: d.name, pageCount: d.pages })), totalPages: result.totalPages || 0 }} metadata={{}} />
         </div>
       )}
     </div>
@@ -951,11 +835,7 @@ const ALL_CATEGORIES = [
 ];
 
 function ConfidenceBadge({ confidence }) {
-  const styles = {
-    HIGH:   { background: '#dcfce7', color: '#166534', border: '1px solid #86efac' },
-    MEDIUM: { background: '#fef9c3', color: '#854d0e', border: '1px solid #fde047' },
-    LOW:    { background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' },
-  };
+  const styles = { HIGH: { background: '#dcfce7', color: '#166534', border: '1px solid #86efac' }, MEDIUM: { background: '#fef9c3', color: '#854d0e', border: '1px solid #fde047' }, LOW: { background: '#fee2e2', color: '#991b1b', border: '1px solid #fca5a5' } };
   const s = styles[confidence] || styles.LOW;
   return <span style={{ ...s, borderRadius: '20px', padding: '2px 10px', fontSize: '10px', fontWeight: '700' }}>{confidence || 'LOW'}</span>;
 }
@@ -967,10 +847,7 @@ function CategoriseTool({ onBack }) {
   const [progress, setProgress]       = useState('');
   const [expandedRow, setExpandedRow] = useState(null);
 
-  const handleFolderSelect = (e) => {
-    setFiles(Array.from(e.target.files).filter(f => !f.name.startsWith('.') && f.size > 0));
-    setResult(null); setExpandedRow(null);
-  };
+  const handleFolderSelect = (e) => { setFiles(Array.from(e.target.files).filter(f => !f.name.startsWith('.') && f.size > 0)); setResult(null); setExpandedRow(null); };
 
   const handleSubmit = async () => {
     if (files.length === 0) { alert('Please select a folder!'); return; }
@@ -1020,11 +897,7 @@ function CategoriseTool({ onBack }) {
       {result && result.success && (
         <div style={{ marginTop: '28px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '20px' }}>
-            {[
-              { label: 'TOTAL FILES',  value: result.totalFiles,  color: '#1a3c6e' },
-              { label: 'FOLDERS USED', value: result.categoryCount, color: '#276749' },
-              { label: 'FLAGGED',      value: result.categorizationResults?.filter(r => r.confidence === 'LOW' || r.confidence === 'MEDIUM').length || 0, color: '#b7791f' },
-            ].map((s, i) => (
+            {[{ label: 'TOTAL FILES', value: result.totalFiles, color: '#1a3c6e' }, { label: 'FOLDERS USED', value: result.categoryCount, color: '#276749' }, { label: 'FLAGGED', value: result.categorizationResults?.filter(r => r.confidence === 'LOW' || r.confidence === 'MEDIUM').length || 0, color: '#b7791f' }].map((s, i) => (
               <div key={i} style={{ background: '#f7f8fc', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
                 <p style={{ color: s.color, fontSize: '22px', fontWeight: '800', margin: '0' }}>{s.value}</p>
                 <p style={{ color: '#aaa', fontSize: '10px', margin: '4px 0 0' }}>{s.label}</p>
@@ -1038,9 +911,7 @@ function CategoriseTool({ onBack }) {
                   <div onClick={() => setExpandedRow(expandedRow === i ? null : i)}
                     style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '10px', alignItems: 'center', padding: '10px 14px', background: i % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #f0f0f0', cursor: 'pointer' }}>
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {getFolderIcon(r.assigned_folder)} {r.original_filename}
-                      </div>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: '#333', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{getFolderIcon(r.assigned_folder)} {r.original_filename}</div>
                       <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>→ {r.assigned_folder}</div>
                     </div>
                     <ConfidenceBadge confidence={r.confidence} />
@@ -1055,24 +926,10 @@ function CategoriseTool({ onBack }) {
               ))}
             </div>
           )}
-          <button onClick={() => downloadZip(result.zipFile)}
-            style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
+          <button onClick={() => downloadZip(result.zipFile)} style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Categorised Folders (ZIP)
           </button>
-          <QCBadge
-            toolName="categorisation"
-            toolOutput={{
-              files: (result.categorizationResults || []).map(r => ({
-                file:       r.original_filename,
-                folder:     r.assigned_folder,
-                // Map string confidence → float so rule checks work correctly
-                confidence: r.confidence === 'HIGH' ? 0.9 : r.confidence === 'MEDIUM' ? 0.5 : 0.2,
-                notes:      r.notes,
-              })),
-              semanticMismatches: [],
-            }}
-            metadata={{}}
-          />
+          <QCBadge toolName="categorisation" toolOutput={{ files: (result.categorizationResults || []).map(r => ({ file: r.original_filename, folder: r.assigned_folder, confidence: r.confidence === 'HIGH' ? 0.9 : r.confidence === 'MEDIUM' ? 0.5 : 0.2, notes: r.notes })), semanticMismatches: [] }} metadata={{}} />
         </div>
       )}
     </div>
@@ -1081,8 +938,6 @@ function CategoriseTool({ onBack }) {
 
 // ─────────────────────────────────────────────────────────────
 // BATES STAMPING TOOL
-// FIX: buildQCData uses batesNumber (not batesStart) so QC sequence
-//      checks actually fire on the correct field name
 // ─────────────────────────────────────────────────────────────
 function StampingTool({ onBack }) {
   const [allFiles, setAllFiles]         = useState([]);
@@ -1103,29 +958,16 @@ function StampingTool({ onBack }) {
 
   const loadFiles = (fileList) => {
     const pdfs = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf') && f.size > 0);
-    setAllFiles(prev => {
-      const existing = new Map(prev.map(f => [f.name, f]));
-      pdfs.forEach(f => existing.set(f.name, f));
-      return Array.from(existing.values());
-    });
-    setSelected(prev => {
-      const updated = { ...prev };
-      pdfs.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
-      return updated;
-    });
+    setAllFiles(prev => { const m = new Map(prev.map(f => [f.name, f])); pdfs.forEach(f => m.set(f.name, f)); return Array.from(m.values()); });
+    setSelected(prev => { const u = { ...prev }; pdfs.forEach(f => { if (!(f.name in u)) u[f.name] = true; }); return u; });
     setResult(null); setError('');
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
   const handleFileSelect   = (e) => loadFiles(e.target.files);
   const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll  = () => {
-    const allChecked = allFiles.every(f => selected[f.name]);
-    const sel = {};
-    allFiles.forEach(f => (sel[f.name] = !allChecked));
-    setSelected(sel);
-  };
-  const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
+  const toggleAll  = () => { const a = allFiles.every(f => selected[f.name]); const s = {}; allFiles.forEach(f => s[f.name] = !a); setSelected(s); };
+  const clearAll   = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
   const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
@@ -1136,14 +978,10 @@ function StampingTool({ onBack }) {
     setProcessing(true); setResult(null); setError('');
     const formData = new FormData();
     selectedFiles.forEach(f => formData.append('pdfs', f));
-    formData.append('prefix',      prefix);
-    formData.append('startNumber', startNumber);
-    formData.append('padLength',   padLength);
-    formData.append('password',    password);
-    formData.append('cornerPct',   (cornerPct / 100).toString());
-    formData.append('fontSize',    fontSize.toString());
-    formData.append('stampColor',  stampColor);
-    formData.append('stampFont',   stampFont);
+    formData.append('prefix', prefix); formData.append('startNumber', startNumber);
+    formData.append('padLength', padLength); formData.append('password', password);
+    formData.append('cornerPct', (cornerPct / 100).toString()); formData.append('fontSize', fontSize.toString());
+    formData.append('stampColor', stampColor); formData.append('stampFont', stampFont);
     try {
       const res  = await fetch('/api/process-pdf', { method: 'POST', body: formData });
       const data = await res.json();
@@ -1160,49 +998,16 @@ function StampingTool({ onBack }) {
     URL.revokeObjectURL(url);
   };
 
-  // ── BUILD QC DATA ────────────────────────────────────────────
-  // KEY FIX: use `batesNumber` field (not `batesStart`) so that
-  // the QC route's sequence checks (f.batesNumber || f.startBates)
-  // actually find the Bates numbers and run gap/duplicate detection.
   const buildQCData = () => {
-    const stamped    = result?.processedCount    || 0;
-    const totalPages = result?.totalStampedPages || 0;
-    const pad        = Number(padLength)  || 6;
-    const start      = Number(startNumber) || 1;
-
-    // Prefer rich per-file data from updated route (has batesStart field)
+    const stamped = result?.processedCount || 0, totalPages = result?.totalStampedPages || 0;
+    const pad = Number(padLength) || 6, start = Number(startNumber) || 1;
     if (result?.processedFiles && result.processedFiles.length > 0) {
-      return {
-        files: result.processedFiles.map(f => ({
-          name:        f.name,
-          batesNumber: f.batesStart,   // ← FIX: map to batesNumber so QC finds it
-          pages:       f.pageCount || 0,
-          position:    f.position,
-        })),
-        stampedCount:      stamped,
-        totalFiles:        selectedFiles.length,
-        totalStampedPages: totalPages,
-        totalInputPages:   totalPages, // same — skipped files have 0 pages
-      };
+      return { files: result.processedFiles.map(f => ({ name: f.name, batesNumber: f.batesStart, pages: f.pageCount || 0, position: f.position })), stampedCount: stamped, totalFiles: selectedFiles.length, totalStampedPages: totalPages, totalInputPages: totalPages };
     }
-
-    // Fallback — reconstruct from frontend state when old route is deployed
     const pagesPerFile = stamped > 0 ? Math.round(totalPages / stamped) : 1;
     let cursor = start;
-    const files = selectedFiles.slice(0, stamped).map(f => {
-      const filePages  = pagesPerFile || 1;
-      const batesNumber = prefix + String(cursor).padStart(pad, '0');
-      cursor += filePages;
-      return { name: f.name, batesNumber, pages: filePages };
-    });
-
-    return {
-      files,
-      stampedCount:      stamped,
-      totalFiles:        selectedFiles.length,
-      totalStampedPages: totalPages,
-      totalInputPages:   totalPages,
-    };
+    const files = selectedFiles.slice(0, stamped).map(f => { const batesNumber = prefix + String(cursor).padStart(pad, '0'); cursor += (pagesPerFile || 1); return { name: f.name, batesNumber, pages: pagesPerFile || 1 }; });
+    return { files, stampedCount: stamped, totalFiles: selectedFiles.length, totalStampedPages: totalPages, totalInputPages: totalPages };
   };
 
   const inputStyle = { width: '100%', padding: '10px', border: '1px solid #ddd', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box', color: '#333' };
@@ -1222,32 +1027,24 @@ function StampingTool({ onBack }) {
         <span style={{ background: '#f0f4ff', border: '1px solid #c7d2fe', color: '#4338ca', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '700' }}>🤖 AI-Powered</span>
       </div>
       <p style={{ color: '#aaa', fontSize: '12px', marginBottom: '24px' }}>Upload a folder or pick individual PDFs → AI detects best corner → Stamps every page sequentially</p>
-
-      {/* Dual upload */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
-          <span style={{ fontSize: '28px' }}>📁</span>
-          <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '13px' }}>Upload Folder</span>
+          <span style={{ fontSize: '28px' }}>📁</span><span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '13px' }}>Upload Folder</span>
           <span style={{ color: '#aaa', fontSize: '11px' }}>All PDFs inside the folder</span>
           <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect} style={{ display: 'none' }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #276749', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
-          <span style={{ fontSize: '28px' }}>📄</span>
-          <span style={{ color: '#276749', fontWeight: '700', fontSize: '13px' }}>Upload PDFs</span>
+          <span style={{ fontSize: '28px' }}>📄</span><span style={{ color: '#276749', fontWeight: '700', fontSize: '13px' }}>Upload PDFs</span>
           <span style={{ color: '#aaa', fontSize: '11px' }}>Pick specific .pdf files</span>
           <input type="file" multiple accept=".pdf" onChange={handleFileSelect} style={{ display: 'none' }} />
         </label>
       </div>
-
-      {/* Checkbox file list */}
       {allFiles.length > 0 && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>📄 Select PDFs ({selectedFiles.length} of {allFiles.length} selected)</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
-                {allChecked ? 'Deselect All' : 'Select All'}
-              </button>
+              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{allChecked ? 'Deselect All' : 'Select All'}</button>
               <button onClick={clearAll} style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Clear</button>
             </div>
           </div>
@@ -1266,41 +1063,21 @@ function StampingTool({ onBack }) {
           {!someChecked && <p style={{ color: '#cc0000', fontSize: '12px', marginTop: '6px' }}>⚠️ Please select at least one PDF.</p>}
         </div>
       )}
-
-      {/* Password */}
       <div style={{ marginBottom: '20px', position: 'relative' }}>
-        <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
-          placeholder="PDF Password (optional — for encrypted PDFs)"
-          style={{ ...inputStyle, paddingRight: '44px' }} />
-        <button onClick={() => setShowPassword(!showPassword)}
-          style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>
-          {showPassword ? '🙈' : '👁️'}
-        </button>
+        <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="PDF Password (optional — for encrypted PDFs)" style={{ ...inputStyle, paddingRight: '44px' }} />
+        <button onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#888', fontSize: '16px' }}>{showPassword ? '🙈' : '👁️'}</button>
       </div>
-
-      {/* Prefix & numbering */}
-      <div style={{ marginBottom: '16px' }}>
-        <input type="text" value={prefix} onChange={e => setPrefix(e.target.value)} placeholder="Prefix e.g. DOC-" style={inputStyle} />
-      </div>
+      <div style={{ marginBottom: '16px' }}><input type="text" value={prefix} onChange={e => setPrefix(e.target.value)} placeholder="Prefix e.g. DOC-" style={inputStyle} /></div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
         <input type="number" value={startNumber} onChange={e => setStartNumber(e.target.value)} placeholder="Start number" style={inputStyle} />
-        <input type="number" value={padLength}   onChange={e => setPadLength(e.target.value)}   placeholder="Digits (pad length)" style={inputStyle} />
+        <input type="number" value={padLength} onChange={e => setPadLength(e.target.value)} placeholder="Digits (pad length)" style={inputStyle} />
       </div>
-
-      {/* Preview */}
       <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px' }}>
         <span style={{ color: '#888', fontSize: '12px' }}>Preview: </span>
-        <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#1a3c6e', fontSize: '14px' }}>
-          {prefix}{String(startNumber).padStart(Number(padLength), '0')}
-        </span>
-        <span style={{ color: '#aaa', fontSize: '11px', marginLeft: '8px' }}>
-          → {prefix}{String(Number(startNumber) + Math.max(0, selectedFiles.length - 1)).padStart(Number(padLength), '0')} (est.)
-        </span>
+        <span style={{ fontFamily: 'monospace', fontWeight: '700', color: '#1a3c6e', fontSize: '14px' }}>{prefix}{String(startNumber).padStart(Number(padLength), '0')}</span>
+        <span style={{ color: '#aaa', fontSize: '11px', marginLeft: '8px' }}>→ {prefix}{String(Number(startNumber) + Math.max(0, selectedFiles.length - 1)).padStart(Number(padLength), '0')} (est.)</span>
       </div>
-
-      {/* Advanced */}
-      <button onClick={() => setShowAdvanced(!showAdvanced)}
-        style={{ background: 'none', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 16px', color: '#555', fontSize: '12px', cursor: 'pointer', marginBottom: '16px', width: '100%', textAlign: 'left' }}>
+      <button onClick={() => setShowAdvanced(!showAdvanced)} style={{ background: 'none', border: '1px solid #ddd', borderRadius: '8px', padding: '8px 16px', color: '#555', fontSize: '12px', cursor: 'pointer', marginBottom: '16px', width: '100%', textAlign: 'left' }}>
         {showAdvanced ? '▲' : '▼'} Advanced Settings
       </button>
       {showAdvanced && (
@@ -1311,18 +1088,11 @@ function StampingTool({ onBack }) {
           </div>
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#333', fontSize: '13px' }}>Stamp Color</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              {optBtn('black', stampColor, setStampColor, '⚫ Black')}
-              {optBtn('red',   stampColor, setStampColor, '🔴 Red')}
-            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>{optBtn('black', stampColor, setStampColor, '⚫ Black')}{optBtn('red', stampColor, setStampColor, '🔴 Red')}</div>
           </div>
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#333', fontSize: '13px' }}>Font</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-              {optBtn('Helvetica', stampFont, setStampFont, 'Helvetica')}
-              {optBtn('Courier',   stampFont, setStampFont, 'Courier')}
-              {optBtn('Times',     stampFont, setStampFont, 'Times')}
-            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>{optBtn('Helvetica', stampFont, setStampFont, 'Helvetica')}{optBtn('Courier', stampFont, setStampFont, 'Courier')}{optBtn('Times', stampFont, setStampFont, 'Times')}</div>
           </div>
           <div>
             <label style={{ display: 'block', fontWeight: '600', marginBottom: '8px', color: '#333', fontSize: '13px' }}>Corner Zone: {cornerPct}%</label>
@@ -1331,48 +1101,31 @@ function StampingTool({ onBack }) {
           </div>
         </div>
       )}
-
       {error && <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>❌ {error}</div>}
-
       <button onClick={handleSubmit} disabled={processing || selectedFiles.length === 0}
         style={{ width: '100%', background: processing || selectedFiles.length === 0 ? '#ccc' : '#1a3c6e', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: processing || selectedFiles.length === 0 ? 'not-allowed' : 'pointer' }}>
-        {processing
-          ? '⏳ Stamping with AI…'
-          : `🚀 Start Stamping${selectedFiles.length > 0 ? ` (${selectedFiles.length} PDF${selectedFiles.length !== 1 ? 's' : ''})` : ''}`}
+        {processing ? '⏳ Stamping with AI…' : `🚀 Start Stamping${selectedFiles.length > 0 ? ` (${selectedFiles.length} PDF${selectedFiles.length !== 1 ? 's' : ''})` : ''}`}
       </button>
-
       {result && result.success && (
         <div style={{ marginTop: '28px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '16px' }}>
-            {[
-              { label: 'STAMPED',  value: result.processedCount, color: '#276749' },
-              { label: 'WARNINGS', value: (result.fallbackFiles?.length || 0) + (result.scannedPDFs?.length || 0), color: '#b7791f' },
-              { label: 'SKIPPED',  value: result.skippedCount || 0, color: '#c53030' },
-            ].map((s, i) => (
+            {[{ label: 'STAMPED', value: result.processedCount, color: '#276749' }, { label: 'WARNINGS', value: (result.fallbackFiles?.length || 0) + (result.scannedPDFs?.length || 0), color: '#b7791f' }, { label: 'SKIPPED', value: result.skippedCount || 0, color: '#c53030' }].map((s, i) => (
               <div key={i} style={{ background: '#f7f8fc', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
                 <p style={{ color: s.color, fontSize: '26px', fontWeight: '800', margin: '0' }}>{s.value}</p>
                 <p style={{ color: '#aaa', fontSize: '11px', margin: '4px 0 0', fontWeight: '600' }}>{s.label}</p>
               </div>
             ))}
           </div>
-
           {result.totalStampedPages > 0 && (
             <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '13px', color: '#1a3c6e' }}>
               📃 <strong>{result.totalStampedPages}</strong> pages stamped across {result.processedCount} files
             </div>
           )}
-
-          <button onClick={() => downloadZip(result.zipFile)}
-            style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
+          <button onClick={() => downloadZip(result.zipFile)} style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Stamped PDFs (ZIP)
           </button>
-
           <QCBadge toolName="bates-stamp" toolOutput={buildQCData()} metadata={{}} />
-
-          <button onClick={clearAll}
-            style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #c6d4ea', borderRadius: '8px', color: '#1a3c6e', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
-            ↺ Stamp Another Batch
-          </button>
+          <button onClick={clearAll} style={{ width: '100%', marginTop: '10px', padding: '10px', background: 'transparent', border: '1px solid #c6d4ea', borderRadius: '8px', color: '#1a3c6e', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>↺ Stamp Another Batch</button>
         </div>
       )}
     </div>
@@ -1396,11 +1149,7 @@ function ExtractionTool({ onBack }) {
       </div>
       <p style={{ color: '#888', fontSize: '13px', marginBottom: '32px' }}>Select the type of document you want to extract data from</p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
-        {[
-          { type: 'invoice', icon: '🧾', title: 'Structured Invoices', desc: 'Upload invoice folder → Specify fields → Extract data → Excel output', active: true },
-          { type: 'bank',    icon: '🏦', title: 'Bank Statements',     desc: 'Upload folder → Select specific PDFs → Transactions extracted → Excel output', active: true },
-          { type: 'tax',     icon: '📑', title: 'Tax Statements',      desc: 'Coming soon', active: false },
-        ].map(opt => (
+        {[{ type: 'invoice', icon: '🧾', title: 'Structured Invoices', desc: 'Upload invoice folder → Specify fields → Extract data → Excel output', active: true }, { type: 'bank', icon: '🏦', title: 'Bank Statements', desc: 'Upload folder → Select specific PDFs → Transactions extracted → Excel output', active: true }, { type: 'tax', icon: '📑', title: 'Tax Statements', desc: 'Coming soon', active: false }].map(opt => (
           <div key={opt.type} onClick={() => opt.active && setActiveType(opt.type)}
             style={{ background: '#f7f8fc', borderRadius: '12px', padding: '24px', cursor: opt.active ? 'pointer' : 'not-allowed', border: '2px solid #eee', opacity: opt.active ? 1 : 0.5 }}
             onMouseOver={e => { if (opt.active) { e.currentTarget.style.borderColor = '#1a3c6e'; e.currentTarget.style.background = '#eef2ff'; } }}
@@ -1430,15 +1179,12 @@ function InvoiceExtractTool({ onBack }) {
   const [result, setResult]         = useState(null);
   const [progress, setProgress]     = useState('');
 
-  const handleFolderSelect = (e) => {
-    setFiles(Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.pdf')));
-  };
+  const handleFolderSelect = (e) => { setFiles(Array.from(e.target.files).filter(f => f.name.toLowerCase().endsWith('.pdf'))); };
 
   const handleSubmit = async () => {
     if (files.length === 0) { alert('Please select a folder!'); return; }
     if (!fields.trim()) { alert('Please enter fields to extract!'); return; }
-    setProcessing(true); setResult(null);
-    setProgress('Reading and extracting data from your invoices...');
+    setProcessing(true); setResult(null); setProgress('Reading and extracting data from your invoices...');
     const formData = new FormData();
     for (let f of files) formData.append('pdfs', f);
     formData.append('fields', fields);
@@ -1472,8 +1218,7 @@ function InvoiceExtractTool({ onBack }) {
         </label>
       </div>
       <div style={{ marginBottom: '28px' }}>
-        <textarea value={fields} onChange={e => setFields(e.target.value)} rows={3}
-          placeholder="Fields to extract: Invoice Date, Invoice Number, Customer Name, Amount..."
+        <textarea value={fields} onChange={e => setFields(e.target.value)} rows={3} placeholder="Fields to extract: Invoice Date, Invoice Number, Customer Name, Amount..."
           style={{ width: '100%', padding: '12px', border: '1px solid #ddd', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box', color: '#333', resize: 'vertical' }} />
       </div>
       <button onClick={handleSubmit} disabled={processing}
@@ -1491,18 +1236,10 @@ function InvoiceExtractTool({ onBack }) {
               </div>
             ))}
           </div>
-          <button onClick={() => downloadExcel(result.excelFile)}
-            style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
+          <button onClick={() => downloadExcel(result.excelFile)} style={{ width: '100%', background: '#276749', color: 'white', padding: '14px', borderRadius: '8px', border: 'none', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             ⬇ Download Excel Report
           </button>
-          <QCBadge
-            toolName="extraction-invoice"
-            toolOutput={{
-              invoices: result.invoices || [],
-              summary:  { totalFiles: result.totalFiles, successCount: result.successCount, errorCount: result.errorCount },
-            }}
-            metadata={{ pageCount: result.pageCount }}
-          />
+          <QCBadge toolName="extraction-invoice" toolOutput={{ invoices: result.invoices || [], summary: { totalFiles: result.totalFiles, successCount: result.successCount, errorCount: result.errorCount } }} metadata={{ pageCount: result.pageCount }} />
         </div>
       )}
       {result && !result.success && (
@@ -1526,29 +1263,16 @@ function BankExtractTool({ onBack }) {
 
   const loadFiles = (fileList) => {
     const pdfs = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    setAllFiles(prev => {
-      const existing = new Map(prev.map(f => [f.name, f]));
-      pdfs.forEach(f => existing.set(f.name, f));
-      return Array.from(existing.values());
-    });
-    setSelected(prev => {
-      const updated = { ...prev };
-      pdfs.forEach(f => { if (!(f.name in updated)) updated[f.name] = true; });
-      return updated;
-    });
+    setAllFiles(prev => { const m = new Map(prev.map(f => [f.name, f])); pdfs.forEach(f => m.set(f.name, f)); return Array.from(m.values()); });
+    setSelected(prev => { const u = { ...prev }; pdfs.forEach(f => { if (!(f.name in u)) u[f.name] = true; }); return u; });
     setResult(null); setError('');
   };
 
   const handleFolderSelect = (e) => loadFiles(e.target.files);
   const handleFileSelect   = (e) => loadFiles(e.target.files);
   const toggleOne  = (name) => setSelected(prev => ({ ...prev, [name]: !prev[name] }));
-  const toggleAll  = () => {
-    const allChecked = allFiles.every(f => selected[f.name]);
-    const sel = {};
-    allFiles.forEach(f => sel[f.name] = !allChecked);
-    setSelected(sel);
-  };
-  const clearAll = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
+  const toggleAll  = () => { const a = allFiles.every(f => selected[f.name]); const s = {}; allFiles.forEach(f => s[f.name] = !a); setSelected(s); };
+  const clearAll   = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
   const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
@@ -1587,13 +1311,11 @@ function BankExtractTool({ onBack }) {
       <p style={{ color: '#888', fontSize: '13px', marginBottom: '28px' }}>Upload folder or pick individual PDFs → check/uncheck → Extract → Excel</p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
-          <span style={{ fontSize: '28px' }}>📁</span>
-          <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '13px' }}>Upload Folder</span>
+          <span style={{ fontSize: '28px' }}>📁</span><span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '13px' }}>Upload Folder</span>
           <input type="file" webkitdirectory="true" multiple onChange={handleFolderSelect} style={{ display: 'none' }} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '20px 12px', background: '#f7f8fc', border: '2px dashed #276749', borderRadius: '10px', cursor: 'pointer', textAlign: 'center' }}>
-          <span style={{ fontSize: '28px' }}>📄</span>
-          <span style={{ color: '#276749', fontWeight: '700', fontSize: '13px' }}>Upload PDFs</span>
+          <span style={{ fontSize: '28px' }}>📄</span><span style={{ color: '#276749', fontWeight: '700', fontSize: '13px' }}>Upload PDFs</span>
           <input type="file" multiple accept=".pdf" onChange={handleFileSelect} style={{ display: 'none' }} />
         </label>
       </div>
@@ -1602,9 +1324,7 @@ function BankExtractTool({ onBack }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <label style={{ fontWeight: '600', color: '#333', fontSize: '14px' }}>Select PDFs ({selectedFiles.length} of {allFiles.length})</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>
-                {allChecked ? 'Deselect All' : 'Select All'}
-              </button>
+              <button onClick={toggleAll} style={{ background: 'none', border: '1px solid #1a3c6e', color: '#1a3c6e', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>{allChecked ? 'Deselect All' : 'Select All'}</button>
               <button onClick={clearAll} style={{ background: 'none', border: '1px solid #ccc', color: '#888', borderRadius: '20px', padding: '4px 12px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>Clear</button>
             </div>
           </div>
@@ -1631,8 +1351,6 @@ function BankExtractTool({ onBack }) {
       {result && (
         <div style={{ background: '#f0fff4', border: '1px solid #86efac', borderRadius: '10px', padding: '20px' }}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '16px', margin: '0 0 16px' }}>✅ Extraction Complete!</p>
-
-          {/* Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div style={{ background: 'white', borderRadius: '8px', padding: '14px', textAlign: 'center' }}>
               <div style={{ fontSize: '24px', fontWeight: '800', color: '#1a3c6e' }}>{result.totalFiles}</div>
@@ -1643,159 +1361,61 @@ function BankExtractTool({ onBack }) {
               <div style={{ fontSize: '12px', color: '#888' }}>Transactions Extracted</div>
             </div>
           </div>
-
-          {/* Per-file summaries */}
           {result.summaries && result.summaries.map((s, i) => (
             <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '12px', marginBottom: '8px', fontSize: '13px' }}>
               <p style={{ fontWeight: '700', color: '#1a3c6e', margin: '0 0 4px' }}>📄 {s.file}</p>
               <p style={{ color: '#555', margin: '0' }}>{s.bank} • {s.account_holder} • {s.account_number} • {s.period} • {s.transaction_count} transactions</p>
             </div>
           ))}
-
-          {/* ── AI RECONCILIATION PANEL ── */}
           {result.reconciliation && result.reconciliation.length > 0 && (
             <div style={{ marginBottom: '16px', marginTop: '4px' }}>
-              <div style={{ fontWeight: '700', fontSize: '13px', color: '#1a3c6e', marginBottom: '10px' }}>
-                🔍 AI Extraction Verification
-              </div>
+              <div style={{ fontWeight: '700', fontSize: '13px', color: '#1a3c6e', marginBottom: '10px' }}>🔍 AI Extraction Verification</div>
               {result.reconciliation.map((rec, i) => {
                 const allMatch = rec.debitsMatch && rec.creditsMatch;
                 const noData   = rec.pdfDebits == null && rec.pdfCredits == null;
                 const borderCol = noData ? '#e5e7eb' : allMatch ? '#86efac' : '#fca5a5';
                 const bgCol     = noData ? '#f9fafb' : allMatch ? '#f0fff4' : '#fff5f5';
                 return (
-                  <div key={i} style={{
-                    background: bgCol,
-                    border: `1.5px solid ${borderCol}`,
-                    borderRadius: '10px',
-                    padding: '14px 16px',
-                    marginBottom: '10px',
-                  }}>
-                    {/* File name + overall status */}
+                  <div key={i} style={{ background: bgCol, border: `1.5px solid ${borderCol}`, borderRadius: '10px', padding: '14px 16px', marginBottom: '10px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '8px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                        📄 {rec.file.replace(/^.*[\\/]/, '')}
-                      </div>
-                      <div style={{
-                        fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', flexShrink: 0,
-                        background: noData ? '#f3f4f6' : allMatch ? '#dcfce7' : '#fee2e2',
-                        color: noData ? '#6b7280' : allMatch ? '#166534' : '#991b1b',
-                      }}>
+                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#333', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>📄 {rec.file.replace(/^.*[\\/]/, '')}</div>
+                      <div style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', borderRadius: '20px', flexShrink: 0, background: noData ? '#f3f4f6' : allMatch ? '#dcfce7' : '#fee2e2', color: noData ? '#6b7280' : allMatch ? '#166534' : '#991b1b' }}>
                         {noData ? '— Not verified' : allMatch ? '✅ Totals match' : '❌ Mismatch found'}
                       </div>
                     </div>
-
-                    {/* Debit + Credit side by side */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                      {/* DEBITS */}
-                      <div style={{
-                        background: rec.debitsMatch ? '#dcfce7' : rec.pdfDebits == null ? '#f3f4f6' : '#fee2e2',
-                        borderRadius: '8px', padding: '12px',
-                      }}>
-                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#666', marginBottom: '6px', letterSpacing: '0.05em' }}>
-                          TOTAL DEBITS
-                        </div>
-                        <div style={{ fontSize: '20px', fontWeight: '800', marginBottom: '6px',
-                          color: rec.debitsMatch ? '#166534' : rec.pdfDebits == null ? '#9ca3af' : '#991b1b' }}>
+                      <div style={{ background: rec.debitsMatch ? '#dcfce7' : rec.pdfDebits == null ? '#f3f4f6' : '#fee2e2', borderRadius: '8px', padding: '12px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#666', marginBottom: '6px', letterSpacing: '0.05em' }}>TOTAL DEBITS</div>
+                        <div style={{ fontSize: '20px', fontWeight: '800', marginBottom: '6px', color: rec.debitsMatch ? '#166534' : rec.pdfDebits == null ? '#9ca3af' : '#991b1b' }}>
                           {rec.debitsMatch ? '✅' : rec.pdfDebits == null ? '—' : '❌'}
                         </div>
-                        <div style={{ fontSize: '12px', color: '#555', marginBottom: '2px' }}>
-                          <span style={{ fontWeight: '600' }}>PDF: </span>
-                          {rec.pdfDebits != null
-                            ? `$${rec.pdfDebits.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-                            : <span style={{ color: '#9ca3af' }}>Not found</span>}
-                        </div>
-                        <div style={{ fontSize: '12px', color: '#555', marginBottom: rec.pdfDebits != null && !rec.debitsMatch ? '4px' : '0' }}>
-                          <span style={{ fontWeight: '600' }}>Extracted: </span>
-                          ${rec.rowDebits.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </div>
-                        {!rec.debitsMatch && rec.pdfDebits != null && (
-                          <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: '700', marginTop: '4px' }}>
-                            Off by ${Math.abs(rec.pdfDebits - rec.rowDebits).toFixed(2)}
-                          </div>
-                        )}
-                        {rec.debitLabel && (
-                          <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            from: "{rec.debitLabel}"
-                          </div>
-                        )}
+                        <div style={{ fontSize: '12px', color: '#555', marginBottom: '2px' }}><span style={{ fontWeight: '600' }}>PDF: </span>{rec.pdfDebits != null ? `$${rec.pdfDebits.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : <span style={{ color: '#9ca3af' }}>Not found</span>}</div>
+                        <div style={{ fontSize: '12px', color: '#555' }}><span style={{ fontWeight: '600' }}>Extracted: </span>${rec.rowDebits.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                        {!rec.debitsMatch && rec.pdfDebits != null && <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: '700', marginTop: '4px' }}>Off by ${Math.abs(rec.pdfDebits - rec.rowDebits).toFixed(2)}</div>}
+                        {rec.debitLabel && <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>from: "{rec.debitLabel}"</div>}
                       </div>
-
-                      {/* CREDITS */}
-                      <div style={{
-                        background: rec.creditsMatch ? '#dcfce7' : rec.pdfCredits == null ? '#f3f4f6' : '#fee2e2',
-                        borderRadius: '8px', padding: '12px',
-                      }}>
-                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#666', marginBottom: '6px', letterSpacing: '0.05em' }}>
-                          TOTAL CREDITS
-                        </div>
-                        <div style={{ fontSize: '20px', fontWeight: '800', marginBottom: '6px',
-                          color: rec.creditsMatch ? '#166534' : rec.pdfCredits == null ? '#9ca3af' : '#991b1b' }}>
+                      <div style={{ background: rec.creditsMatch ? '#dcfce7' : rec.pdfCredits == null ? '#f3f4f6' : '#fee2e2', borderRadius: '8px', padding: '12px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#666', marginBottom: '6px', letterSpacing: '0.05em' }}>TOTAL CREDITS</div>
+                        <div style={{ fontSize: '20px', fontWeight: '800', marginBottom: '6px', color: rec.creditsMatch ? '#166534' : rec.pdfCredits == null ? '#9ca3af' : '#991b1b' }}>
                           {rec.creditsMatch ? '✅' : rec.pdfCredits == null ? '—' : '❌'}
                         </div>
-                        <div style={{ fontSize: '12px', color: '#555', marginBottom: '2px' }}>
-                          <span style={{ fontWeight: '600' }}>PDF: </span>
-                          {rec.pdfCredits != null
-                            ? `$${rec.pdfCredits.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-                            : <span style={{ color: '#9ca3af' }}>Not found</span>}
-                        </div>
-                        <div style={{ fontSize: '12px', color: '#555', marginBottom: rec.pdfCredits != null && !rec.creditsMatch ? '4px' : '0' }}>
-                          <span style={{ fontWeight: '600' }}>Extracted: </span>
-                          ${rec.rowCredits.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </div>
-                        {!rec.creditsMatch && rec.pdfCredits != null && (
-                          <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: '700', marginTop: '4px' }}>
-                            Off by ${Math.abs(rec.pdfCredits - rec.rowCredits).toFixed(2)}
-                          </div>
-                        )}
-                        {rec.creditLabel && (
-                          <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            from: "{rec.creditLabel}"
-                          </div>
-                        )}
+                        <div style={{ fontSize: '12px', color: '#555', marginBottom: '2px' }}><span style={{ fontWeight: '600' }}>PDF: </span>{rec.pdfCredits != null ? `$${rec.pdfCredits.toLocaleString('en-US', { minimumFractionDigits: 2 })}` : <span style={{ color: '#9ca3af' }}>Not found</span>}</div>
+                        <div style={{ fontSize: '12px', color: '#555' }}><span style={{ fontWeight: '600' }}>Extracted: </span>${rec.rowCredits.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                        {!rec.creditsMatch && rec.pdfCredits != null && <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: '700', marginTop: '4px' }}>Off by ${Math.abs(rec.pdfCredits - rec.rowCredits).toFixed(2)}</div>}
+                        {rec.creditLabel && <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>from: "{rec.creditLabel}"</div>}
                       </div>
                     </div>
-
-                    {/* No data message */}
-                    {noData && (
-                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '10px', textAlign: 'center' }}>
-                        Claude could not find summary totals in this PDF — verify manually
-                      </div>
-                    )}
-
-                    {/* Mismatch warning */}
-                    {!noData && !allMatch && (
-                      <div style={{ marginTop: '10px', padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', fontSize: '12px', color: '#991b1b' }}>
-                        ⚠️ Extraction totals do not match PDF summary — some transactions may be missing or duplicated. Re-run extraction or manually verify.
-                      </div>
-                    )}
+                    {noData && <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '10px', textAlign: 'center' }}>Claude could not find summary totals in this PDF — verify manually</div>}
+                    {!noData && !allMatch && <div style={{ marginTop: '10px', padding: '8px 12px', background: '#fef2f2', borderRadius: '6px', fontSize: '12px', color: '#991b1b' }}>⚠️ Extraction totals do not match PDF summary — some transactions may be missing or duplicated. Re-run extraction or manually verify.</div>}
                   </div>
                 );
               })}
             </div>
           )}
-
-          <button onClick={handleDownload}
-            style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
+          <button onClick={handleDownload} style={{ width: '100%', padding: '14px', background: '#166534', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: 'pointer' }}>
             📥 Download Excel File
           </button>
-          <QCBadge
-            toolName="extraction-bank"
-            toolOutput={result.qcData || {
-              statements: (result.summaries || []).map(s => ({
-                file:             s.file,
-                openingBalance:   s.opening_balance   || null,
-                closingBalance:   s.closing_balance   || null,
-                totalDebits:      s.total_debits      || null,
-                totalCredits:     s.total_credits     || null,
-                transactionCount: s.transaction_count || 0,
-                periodStart:      null,
-                periodEnd:        null,
-              })),
-              transactions: [], dateGaps: [], amountOutliers: [],
-            }}
-            metadata={{ pageCount: result.pageCount }}
-          />
+          <QCBadge toolName="extraction-bank" toolOutput={result.qcData || { statements: (result.summaries || []).map(s => ({ file: s.file, openingBalance: s.opening_balance || null, closingBalance: s.closing_balance || null, totalDebits: s.total_debits || null, totalCredits: s.total_credits || null, transactionCount: s.transaction_count || 0, periodStart: null, periodEnd: null })), transactions: [], dateGaps: [], amountOutliers: [] }} metadata={{ pageCount: result.pageCount }} />
         </div>
       )}
     </div>
@@ -1818,6 +1438,286 @@ function TaxExtractTool({ onBack }) {
         <p style={{ color: '#b7791f', fontWeight: '700', fontSize: '15px', margin: '0 0 8px' }}>Coming Soon</p>
         <p style={{ color: '#888', fontSize: '13px', margin: '0' }}>Will be built after Invoice & Bank Statement extraction are complete.</p>
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// STEP 9 — QC BANK EXTRACTION TOOL
+// ─────────────────────────────────────────────────────────────
+function QCBankExtractionTool({ onBack }) {
+  const [excelFiles, setExcelFiles]     = useState([]);
+  const [pdfFiles, setPdfFiles]         = useState([]);
+  const [selectedExcels, setSelExcels]  = useState({});
+  const [selectedPDFs, setSelPDFs]      = useState({});
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState('');
+  const [report, setReport]             = useState(null);
+  const [expandedFile, setExpandedFile] = useState(null);
+
+  const loadExcels = (fileList) => {
+    const valid = Array.from(fileList).filter(f => (f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls') || f.name.toLowerCase().endsWith('.csv')) && f.size > 0);
+    setExcelFiles(prev => { const m = new Map(prev.map(f => [f.name, f])); valid.forEach(f => m.set(f.name, f)); return Array.from(m.values()); });
+    setSelExcels(prev => { const u = { ...prev }; valid.forEach(f => { if (!(f.name in u)) u[f.name] = true; }); return u; });
+  };
+
+  const loadPDFs = (fileList) => {
+    const valid = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf') && f.size > 0);
+    setPdfFiles(prev => { const m = new Map(prev.map(f => [f.name, f])); valid.forEach(f => m.set(f.name, f)); return Array.from(m.values()); });
+    setSelPDFs(prev => { const u = { ...prev }; valid.forEach(f => { if (!(f.name in u)) u[f.name] = true; }); return u; });
+  };
+
+  const selExcelList = excelFiles.filter(f => selectedExcels[f.name]);
+  const selPDFList   = pdfFiles.filter(f => selectedPDFs[f.name]);
+  const canRun       = selExcelList.length > 0 && selPDFList.length > 0;
+
+  const clearAll = () => { setExcelFiles([]); setPdfFiles([]); setSelExcels({}); setSelPDFs({}); setReport(null); setError(''); setExpandedFile(null); };
+
+  const handleRun = async () => {
+    setLoading(true); setError(''); setReport(null);
+    try {
+      const fd = new FormData();
+      selExcelList.forEach(f => fd.append('excels', f));
+      selPDFList.forEach(f =>   fd.append('pdfs',   f));
+      const res  = await fetch('/api/qc-bank-extraction', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'QC failed');
+      setReport(data);
+      if (data.results?.length > 0) setExpandedFile(data.results[0].file);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  const riskColor = (r) => r === 'high' ? '#dc2626' : r === 'medium' ? '#d97706' : '#16a34a';
+  const riskBg    = (r) => r === 'high' ? '#fee2e2' : r === 'medium' ? '#fef9c3' : '#dcfce7';
+  const riskIcon  = (r) => r === 'high' ? '🔴' : r === 'medium' ? '🟡' : '🟢';
+  const riskLabel = (r) => r === 'high' ? 'High — Not Reliable' : r === 'medium' ? 'Medium — Usable with Caution' : 'Low — Reliable';
+  const statusIcon  = (s) => s === 'pass' ? '✅' : s === 'fail' ? '❌' : '⚠️';
+  const statusColor = (s) => s === 'pass' ? '#166534' : s === 'fail' ? '#991b1b' : '#854d0e';
+  const statusBg    = (s) => s === 'pass' ? '#dcfce7' : s === 'fail' ? '#fee2e2' : '#fef9c3';
+
+  const FileList = ({ files, selected, toggle, icon }) => (
+    <div style={{ border: '1px solid #eee', borderRadius: '8px', overflow: 'hidden', maxHeight: '180px', overflowY: 'auto' }}>
+      {files.map((f, i) => (
+        <div key={f.name} onClick={() => toggle(f.name)}
+          style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 14px', background: selected[f.name] ? '#f0f4ff' : i % 2 === 0 ? 'white' : '#fafafa', borderBottom: i < files.length - 1 ? '1px solid #f0f0f0' : 'none', cursor: 'pointer' }}>
+          <div style={{ width: '16px', height: '16px', borderRadius: '4px', flexShrink: 0, border: `2px solid ${selected[f.name] ? '#1a3c6e' : '#ccc'}`, background: selected[f.name] ? '#1a3c6e' : 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {selected[f.name] && <span style={{ color: 'white', fontSize: '10px', fontWeight: '700' }}>✓</span>}
+          </div>
+          <span style={{ fontSize: '12px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selected[f.name] ? '#1a3c6e' : '#555', fontWeight: selected[f.name] ? '600' : '400' }}>{icon} {f.name}</span>
+          <span style={{ fontSize: '11px', color: '#aaa', flexShrink: 0 }}>{(f.size / 1024).toFixed(0)} KB</span>
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ background: 'white', borderRadius: '12px', padding: '36px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)' }}>
+      <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
+        <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 9</span>
+        <h2 style={{ color: '#1a3c6e', fontSize: '22px', margin: '0' }}>🔬 QC Bank Extraction</h2>
+      </div>
+      <p style={{ color: '#888', fontSize: '13px', marginBottom: '28px' }}>Upload extracted Excel + original PDF(s) → Validate accuracy → Full audit-ready QC report</p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+        <div>
+          <label style={{ display: 'block', fontWeight: '700', color: '#1a3c6e', fontSize: '13px', marginBottom: '8px' }}>📊 Excel Files (Extracted Data)</label>
+          <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', padding: '16px', background: '#f7f8fc', border: '2px dashed #1a3c6e', borderRadius: '8px', cursor: 'pointer', marginBottom: '8px' }}>
+            <span style={{ fontSize: '24px' }}>📊</span>
+            <span style={{ color: '#1a3c6e', fontWeight: '700', fontSize: '12px' }}>Upload Excel / CSV</span>
+            <input type="file" multiple accept=".xlsx,.xls,.csv" onChange={e => loadExcels(e.target.files)} style={{ display: 'none' }} />
+          </label>
+          {excelFiles.length > 0 && <FileList files={excelFiles} selected={selectedExcels} toggle={(name) => setSelExcels(p => ({ ...p, [name]: !p[name] }))} icon="📊" />}
+        </div>
+        <div>
+          <label style={{ display: 'block', fontWeight: '700', color: '#1a3c6e', fontSize: '13px', marginBottom: '8px' }}>📄 Bank Statement PDFs (Ground Truth)</label>
+          <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', padding: '16px', background: '#f7f8fc', border: '2px dashed #276749', borderRadius: '8px', cursor: 'pointer', marginBottom: '8px' }}>
+            <span style={{ fontSize: '24px' }}>📄</span>
+            <span style={{ color: '#276749', fontWeight: '700', fontSize: '12px' }}>Upload PDF(s)</span>
+            <input type="file" multiple accept=".pdf" onChange={e => loadPDFs(e.target.files)} style={{ display: 'none' }} />
+          </label>
+          {pdfFiles.length > 0 && <FileList files={pdfFiles} selected={selectedPDFs} toggle={(name) => setSelPDFs(p => ({ ...p, [name]: !p[name] }))} icon="📄" />}
+        </div>
+      </div>
+
+      {selExcelList.length > 0 && selPDFList.length > 0 && (
+        <div style={{ background: '#f0f4ff', border: '1px solid #dce6ff', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#1a3c6e' }}>
+          ℹ️ Matching {selExcelList.length} Excel file(s) with {selPDFList.length} PDF(s) via <strong>File Name</strong> column. If no File Name column, all rows matched to the PDF.
+        </div>
+      )}
+
+      {error && <div style={{ background: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '8px', padding: '12px', marginBottom: '16px', color: '#cc0000', fontSize: '13px' }}>❌ {error}</div>}
+
+      <button onClick={handleRun} disabled={loading || !canRun}
+        style={{ width: '100%', padding: '14px', background: loading || !canRun ? '#ccc' : '#0f2444', color: 'white', border: 'none', borderRadius: '8px', fontSize: '15px', fontWeight: '700', cursor: loading || !canRun ? 'not-allowed' : 'pointer', marginBottom: '8px' }}>
+        {loading ? '⏳ Running QC validation...' : `🔬 Run QC Check (${selExcelList.length} Excel, ${selPDFList.length} PDF)`}
+      </button>
+      {!canRun && !loading && <p style={{ color: '#aaa', fontSize: '12px', textAlign: 'center', marginBottom: '16px' }}>Upload at least 1 Excel and 1 PDF to run QC</p>}
+
+      {report && (
+        <div style={{ marginTop: '24px' }}>
+          {/* Overall summary */}
+          <div style={{ background: riskBg(report.overallRisk), border: `2px solid ${riskColor(report.overallRisk)}`, borderRadius: '12px', padding: '20px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <div>
+                <span style={{ fontSize: '22px', marginRight: '8px' }}>{riskIcon(report.overallRisk)}</span>
+                <span style={{ fontWeight: '800', fontSize: '18px', color: riskColor(report.overallRisk) }}>{riskLabel(report.overallRisk)}</span>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: '12px', color: '#555' }}>
+                <div>{report.totalPDFs} PDF(s) | {report.totalExcels} Excel(s) | {report.totalRows} rows</div>
+                <div style={{ color: report.totalFails > 0 ? '#dc2626' : '#16a34a', fontWeight: '700' }}>{report.totalFails} fail(s) · {report.totalWarns} warning(s)</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Per-file results */}
+          {report.results.map((res) => (
+            <div key={res.file} style={{ border: '1px solid #e5e7eb', borderRadius: '10px', marginBottom: '16px', overflow: 'hidden' }}>
+              <div onClick={() => setExpandedFile(expandedFile === res.file ? null : res.file)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#f7f8fc', cursor: 'pointer', borderBottom: expandedFile === res.file ? '1px solid #e5e7eb' : 'none' }}>
+                <div>
+                  <div style={{ fontWeight: '700', color: '#1a3c6e', fontSize: '14px' }}>📄 {res.file}</div>
+                  <div style={{ fontSize: '12px', color: '#888', marginTop: '2px' }}>{res.bankName} • {res.accountHolder} • {res.statementPeriod} • {res.transactionRows} rows</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ background: riskBg(res.riskLevel), color: riskColor(res.riskLevel), border: `1px solid ${riskColor(res.riskLevel)}`, borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>
+                    {riskIcon(res.riskLevel)} {res.riskLevel.toUpperCase()}
+                  </span>
+                  <span style={{ color: '#aaa', fontSize: '14px' }}>{expandedFile === res.file ? '▲' : '▼'}</span>
+                </div>
+              </div>
+
+              {expandedFile === res.file && (
+                <div style={{ padding: '18px' }}>
+
+                  {/* 1. Insights */}
+                  {res.insights.length > 0 && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <h4 style={{ color: '#1a3c6e', fontSize: '12px', fontWeight: '700', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔍 Insights</h4>
+                      {res.insights.map((ins, i) => (
+                        <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '6px', fontSize: '12px', color: '#333' }}><span>›</span><span>{ins}</span></div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 2. Core Validation Table */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{ color: '#1a3c6e', fontSize: '12px', fontWeight: '700', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>📊 Core Validation</h4>
+                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                        <thead>
+                          <tr style={{ background: '#0f2444' }}>
+                            {['Check', 'Status', 'PDF', 'Excel', 'Details'].map(h => (
+                              <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: 'white', fontWeight: '700' }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {res.checks.map((c, i) => (
+                            <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+                              <td style={{ padding: '9px 12px', color: '#333', fontWeight: '600' }}>{c.type}</td>
+                              <td style={{ padding: '9px 12px', textAlign: 'center' }}>
+                                <span style={{ background: statusBg(c.status), color: statusColor(c.status), borderRadius: '20px', padding: '2px 8px', fontSize: '11px', fontWeight: '700' }}>{statusIcon(c.status)}</span>
+                              </td>
+                              <td style={{ padding: '9px 12px', color: '#555' }}>{c.pdfVal}</td>
+                              <td style={{ padding: '9px 12px', color: '#555' }}>{c.excelVal}</td>
+                              <td style={{ padding: '9px 12px', color: c.status === 'fail' ? '#991b1b' : c.status === 'warn' ? '#854d0e' : '#166534', fontStyle: 'italic' }}>
+                                {c.detail}
+                                {c.errors?.length > 0 && c.errors.map((e, ei) => (
+                                  <div key={ei} style={{ fontSize: '11px', color: '#991b1b', fontStyle: 'normal', marginTop: '2px' }}>Row {e.row} ({e.date}): expected ${e.expected}, found ${e.found}</div>
+                                ))}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* 3. Transaction Issues */}
+                  {res.txIssues.length > 0 && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <h4 style={{ color: '#1a3c6e', fontSize: '12px', fontWeight: '700', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔎 Transaction-Level Issues</h4>
+                      <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                          <thead>
+                            <tr style={{ background: '#0f2444' }}>
+                              {['Date', 'Description', 'Issue', 'Expected', 'Extracted'].map(h => (
+                                <th key={h} style={{ padding: '9px 12px', textAlign: 'left', color: 'white', fontWeight: '700' }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {res.txIssues.map((t, i) => (
+                              <tr key={i} style={{ background: i % 2 === 0 ? 'white' : '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+                                <td style={{ padding: '8px 12px', color: '#555' }}>{t.date}</td>
+                                <td style={{ padding: '8px 12px', color: '#333', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.description}</td>
+                                <td style={{ padding: '8px 12px' }}><span style={{ background: '#fee2e2', color: '#991b1b', borderRadius: '20px', padding: '2px 8px', fontSize: '10px', fontWeight: '700' }}>{t.issue}</span></td>
+                                <td style={{ padding: '8px 12px', color: '#166534', fontWeight: '600' }}>{t.expected}</td>
+                                <td style={{ padding: '8px 12px', color: '#991b1b', fontWeight: '600' }}>{t.extracted}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 4. Category Mismatches */}
+                  {res.categoryChecks.length > 0 && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <h4 style={{ color: '#1a3c6e', fontSize: '12px', fontWeight: '700', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>📂 Category-Level Mismatches</h4>
+                      {res.categoryChecks.map((c, i) => (
+                        <div key={i} style={{ background: '#fff5f5', border: '1px solid #fca5a5', borderRadius: '6px', padding: '10px 14px', marginBottom: '8px', fontSize: '12px' }}>
+                          <strong>{c.label}:</strong> PDF ${c.pdfAmount.toFixed(2)} vs Excel ${c.extracted.toFixed(2)} — off by <strong style={{ color: '#dc2626' }}>${c.diff.toFixed(2)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 5. Pattern Analysis */}
+                  {res.patterns.length > 0 && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <h4 style={{ color: '#1a3c6e', fontSize: '12px', fontWeight: '700', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>⚠️ Pattern Analysis</h4>
+                      {res.patterns.map((p, i) => (
+                        <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '6px', fontSize: '12px', color: '#854d0e', background: '#fef9c3', borderRadius: '6px', padding: '8px 12px' }}>
+                          <span>⚠</span><span>{p}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 6. Risk Level */}
+                  <div style={{ background: riskBg(res.riskLevel), border: `1px solid ${riskColor(res.riskLevel)}`, borderRadius: '8px', padding: '14px', marginBottom: '20px' }}>
+                    <h4 style={{ color: riskColor(res.riskLevel), fontSize: '12px', fontWeight: '700', margin: '0 0 6px', textTransform: 'uppercase' }}>🚨 Risk Level: {riskIcon(res.riskLevel)} {riskLabel(res.riskLevel)}</h4>
+                    <p style={{ color: '#555', fontSize: '12px', margin: 0 }}>
+                      {res.riskLevel === 'high'   && 'Critical validation failures detected. Do not use for litigation or audit without re-extraction and manual verification.'}
+                      {res.riskLevel === 'medium' && 'Some issues detected. Usable with caution — verify flagged items before relying on this data for formal analysis.'}
+                      {res.riskLevel === 'low'    && 'All key validations passed. Data appears reliable for financial analysis and legal use.'}
+                    </p>
+                  </div>
+
+                  {/* 7. Recommendations */}
+                  <div>
+                    <h4 style={{ color: '#1a3c6e', fontSize: '12px', fontWeight: '700', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>💡 Recommendations</h4>
+                    {res.recommendations.map((r, i) => (
+                      <div key={i} style={{ display: 'flex', gap: '10px', marginBottom: '8px', fontSize: '12px', color: '#333', background: '#f0f4ff', borderRadius: '6px', padding: '8px 12px' }}>
+                        <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '50%', width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '700', flexShrink: 0 }}>{i + 1}</span>
+                        <span>{r}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          <button onClick={clearAll} style={{ width: '100%', padding: '10px', background: 'transparent', border: '1px solid #ddd', borderRadius: '8px', color: '#888', cursor: 'pointer', fontSize: '13px', fontWeight: '600', marginTop: '8px' }}>
+            ↺ Run Another QC Check
+          </button>
+        </div>
+      )}
     </div>
   );
 }
