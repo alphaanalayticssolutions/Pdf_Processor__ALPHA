@@ -449,7 +449,7 @@ Rules:
 - Row 3 is Net Change — bank accounts are NOT double-entry books
 - Credits that match PDF deposit totals are NOT OCR errors
 - transactionIssues: from runningBalanceErrors only, max 15, empty [] if none
-- patternInsights: 4–6 bullets citing actual amounts
+- patternInsights: 4–6 bullets citing actual amounts. IMPORTANT: amountOutliers show "Nx the median" where N is a SIZE MULTIPLIER not an instance count — do NOT say "N instances of amount X". Say "amount X is Nx the median transaction size".
 - riskLevel: low = all pass, medium = 1-2 minor, high = balance mismatch or missing transactions
 - recommendations: 3–5 specific steps based on actual issues`;
 

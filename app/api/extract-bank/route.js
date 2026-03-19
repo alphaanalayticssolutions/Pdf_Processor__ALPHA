@@ -178,8 +178,23 @@ function buildBankQcData(allStatements, allTransactions, reconciliation) {
     if (amounts.length < 5) return;
     const median = amounts[Math.floor(amounts.length / 2)];
     (stmt.transactions || []).forEach((t) => {
-      if (!((t.debit || 0) > 0)) return;                              // credits only
+      if (!((t.debit || 0) > 0)) return;                              // debits only
       if (t.check_number && String(t.check_number).trim()) return;    // skip checks
+
+      // Skip known legitimate large electronic payments — these are real transactions,
+      // not OCR errors. AmEx ACH, IRS tax payments, wire transfers, Zelle, mortgage
+      // payments etc. can be any size and should never be flagged as outliers.
+      const desc = (t.description || "").toLowerCase();
+      const isElectronicPayment =
+        desc.includes("american express") || desc.includes("amex") ||
+        desc.includes("irs ") || desc.includes("usataxpymt") ||
+        desc.includes("wire") || desc.includes("zelle") ||
+        desc.includes("ach ") || desc.includes(" ach") ||
+        desc.includes("mortgage") || desc.includes("mtg pymt") ||
+        desc.includes("tax") || desc.includes("online transfer") ||
+        desc.includes("bill pay") || desc.includes("quickpay");
+      if (isElectronicPayment) return;
+
       const amt = t.debit || 0;
       if (amt > median * 20 && median > 0) amountOutliers.push({ file: stmt.fileName, date: t.date, amount: amt, times: Math.round(amt / median) });
     });
