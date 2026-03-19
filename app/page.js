@@ -1378,24 +1378,32 @@ function ExtractionTool({ onBack }) {
       <button onClick={onBack} style={S.backBtn}>← Back to Dashboard</button>
       <ToolHeader step={5} icon="🔍" title="Extraction" desc="Select the type of document you want to extract data from" />
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {options.map(opt => {
-          const [hover, setHover] = useState(false);
-          return (
-            <div key={opt.type} onClick={() => opt.active && setActiveType(opt.type)}
-              onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-              style={{ background: hover && opt.active ? '#eff6ff' : '#f8fafc', borderRadius: '12px', padding: '20px 24px', cursor: opt.active ? 'pointer' : 'not-allowed', border: `2px solid ${hover && opt.active ? '#1a3c6e' : '#e5e7eb'}`, opacity: opt.active ? 1 : 0.5, transition: 'all 0.15s' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <span style={{ fontSize: '34px' }}>{opt.icon}</span>
-                <div style={{ flex: 1 }}>
-                  <h3 style={{ color: '#0f172a', margin: '0 0 4px', fontSize: '15px', fontWeight: '700' }}>{opt.title}</h3>
-                  <p style={{ color: '#6b7280', fontSize: '12px', margin: '0' }}>{opt.desc}</p>
-                </div>
-                {opt.active ? <span style={{ color: '#1a3c6e', fontSize: '18px' }}>→</span>
-                  : <span style={{ background: '#e5e7eb', color: '#9ca3af', borderRadius: '20px', padding: '2px 10px', fontSize: '10px', fontWeight: '700' }}>SOON</span>}
-              </div>
-            </div>
-          );
-        })}
+        {options.map(opt => (
+          <ExtractionOptionCard key={opt.type} opt={opt} onSelect={() => opt.active && setActiveType(opt.type)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExtractionOptionCard({ opt, onSelect }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      onClick={onSelect}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{ background: hover && opt.active ? '#eff6ff' : '#f8fafc', borderRadius: '12px', padding: '20px 24px', cursor: opt.active ? 'pointer' : 'not-allowed', border: `2px solid ${hover && opt.active ? '#1a3c6e' : '#e5e7eb'}`, opacity: opt.active ? 1 : 0.5, transition: 'all 0.15s' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <span style={{ fontSize: '34px' }}>{opt.icon}</span>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ color: '#0f172a', margin: '0 0 4px', fontSize: '15px', fontWeight: '700' }}>{opt.title}</h3>
+          <p style={{ color: '#6b7280', fontSize: '12px', margin: '0' }}>{opt.desc}</p>
+        </div>
+        {opt.active
+          ? <span style={{ color: '#1a3c6e', fontSize: '18px' }}>→</span>
+          : <span style={{ background: '#e5e7eb', color: '#9ca3af', borderRadius: '20px', padding: '2px 10px', fontSize: '10px', fontWeight: '700' }}>SOON</span>}
       </div>
     </div>
   );
