@@ -475,10 +475,13 @@ async function runAIAnalysis(toolName, toolOutput, ruleFindings) {
 
 YOUR TASK: Find what rule checks missed using domain expertise.
 
-IMPORTANT:
+IMPORTANT — DO NOT FLAG THESE AS ISSUES:
 - Large credits/deposits on a business account are NOT OCR errors — do not flag them.
 - Accounts starting late are NOT dormant.
 - External payments have no counterparts in dataset — expected.
+- A statement with very few transactions (1-5) is NOT automatically suspicious. Some accounts (LLC holding accounts, escrow accounts, special-purpose accounts) genuinely have minimal monthly activity. ONLY flag low transaction count if balance math also fails or there are date gaps mid-period.
+- If opening + credits - debits = closing balance exactly, the extraction is COMPLETE regardless of how few transactions there are. Do not suggest missing pages when math is perfect.
+- Zero deposits in a month is normal for accounts that only disburse funds (investment accounts, payroll funding accounts, holding accounts).
 
 SCORING: 90-100 clean, 75-89 minor issues, 55-74 real problems, 30-54 re-run needed, 0-29 unreliable.
 Be SPECIFIC — name file, account, date, amount. If data looks clean, score it high.

@@ -124,22 +124,25 @@ async function runAIReconciliation(base64PDF, fileName, rowDebits, rowCredits) {
           },
           {
             type: 'text',
-            text: `Look at this bank statement PDF and find the SUMMARY / CHECKING SUMMARY section.
-It is usually a table near the top or start of the statement showing Beginning Balance, categories with amounts, and Ending Balance.
+            text: `Look at this bank statement PDF and find the SUMMARY / BALANCE SUMMARY / CHECKING SUMMARY section.
+It is usually a table near the top showing Beginning Balance, categories with amounts, and Ending Balance.
 
-IMPORTANT: Do NOT read the pre-printed total line (e.g. "Ending Balance"). Instead:
-1. Find each individual DEBIT line item (Checks Paid, ATM & Debit Card Withdrawals, Electronic Withdrawals, Other Withdrawals, Fees, etc.) and read its amount exactly.
-2. Add those individual amounts yourself to get pdfDebits.
-3. Find each individual CREDIT line item (Deposits and Additions, etc.) and read its amount exactly.
-4. Add those individual amounts yourself to get pdfCredits.
+IMPORTANT: Do NOT read the pre-printed Ending Balance total. Instead read each line item individually.
 
-Reading each line separately is more accurate than reading the printed total which may have OCR errors.
+STEP 1 — Find every DEBIT line item and include ALL of these:
+- Withdrawals and Debits / Checks Paid / ATM & Debit Card Withdrawals
+- Electronic Withdrawals / Other Withdrawals / Wire Transfers Out
+- Service Charge Fees / Maintenance Fees / Analysis Fees / Monthly Fees
+- ANY fee, charge, or cost line — these are debits even if listed separately below the main summary
+
+STEP 2 — Find every CREDIT line item:
+- Deposits and Credits / Deposits and Additions / Wire Transfers In
 
 Return ONLY this JSON, nothing else:
 {"debitItems": [{"label": "<category name>", "amount": <number>}], "creditItems": [{"label": "<category name>", "amount": <number>}]}
 
 Rules:
-- List every debit/withdrawal category as a separate item in debitItems
+- List EVERY debit/fee/charge category as a separate item in debitItems — do NOT omit service charges
 - List every credit/deposit category as a separate item in creditItems
 - amounts must be positive numbers (no minus signs)
 - If you cannot find the summary section, return: {"debitItems": [], "creditItems": []}
@@ -591,7 +594,9 @@ export async function POST(request) {
       excelFile:         excelBase64,
       fileName:          outputFileName,
       reconciliation,
-      qcData:            buildBankQcData(allStatements, allTransactions),
+      // reconciliation is embedded inside qcData so QCBadge always has it
+      // via toolOutput — no separate metadata prop required on the calling page.
+      qcData:            { ...buildBankQcData(allStatements, allTransactions), reconciliation },
     });
 
   } catch (err) {
