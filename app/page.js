@@ -125,73 +125,91 @@ export default function Home() {
   ];
 
   return (
-    <main style={{ minHeight: '100vh', background: '#0a1628', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
+    <main style={{ minHeight: '100vh', background: '#f7f8fc', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
 
-      {/* Header */}
-      <div style={{ background: 'linear-gradient(135deg, #0f2444 0%, #1a3a6e 100%)', padding: '40px 20px 36px', textAlign: 'center', position: 'relative', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+      {/* ── HEADER ── */}
+      <div style={{ background: 'linear-gradient(135deg, #0f2444 0%, #1e4080 100%)', padding: '48px 20px 40px', textAlign: 'center', position: 'relative' }}>
         <div style={{ position: 'absolute', top: '16px', right: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ color: '#94a3b8', fontSize: '12px' }}>{userEmail}</span>
           <button onClick={handleLogout}
-            style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#cbd5e1', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>
+            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>
             Sign Out
           </button>
         </div>
-        <div style={{ fontSize: '44px', marginBottom: '12px' }}>⚖️</div>
-        <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.08)', borderRadius: '30px', padding: '5px 18px', marginBottom: '14px', border: '1px solid rgba(255,255,255,0.12)' }}>
-          <span style={{ color: '#93c5fd', fontSize: '11px', letterSpacing: '3px', fontWeight: '700' }}>LEGAL DOCUMENT PLATFORM</span>
+        <div style={{ fontSize: '52px', marginBottom: '14px' }}>⚖️</div>
+        <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.12)', borderRadius: '30px', padding: '5px 20px', marginBottom: '16px' }}>
+          <span style={{ color: 'white', fontSize: '11px', letterSpacing: '3px', fontWeight: '700' }}>LEGAL DOCUMENT PLATFORM</span>
         </div>
-        <h1 style={{ fontSize: '36px', fontWeight: '800', color: '#ffffff', margin: '0 0 10px', letterSpacing: '-0.5px' }}>Alpha Analytics Solutions</h1>
-        <p style={{ fontSize: '15px', color: '#94a3b8', margin: '0 0 20px' }}>AI-powered legal document automation — 9 powerful tools</p>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: 'rgba(20,184,166,0.1)', border: '1px solid rgba(20,184,166,0.3)', borderRadius: '12px', padding: '8px 20px' }}>
-          <span style={{ fontSize: '13px' }}>🔒</span>
-          <span style={{ color: '#5eead4', fontSize: '12px', fontWeight: '600', letterSpacing: '1px' }}>FILES PROCESSED IN MEMORY — NEVER STORED</span>
+        <h1 style={{ fontSize: '42px', fontWeight: '800', color: '#ffffff', margin: '0 0 12px', letterSpacing: '-0.5px' }}>Automate Your Legal Operations</h1>
+        <p style={{ fontSize: '17px', color: '#cbd5e1', marginBottom: '28px', lineHeight: '1.6' }}>AI-powered document processing — follow the steps in order for best results</p>
+        <div style={{ display: 'inline-block', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '12px', padding: '10px 24px' }}>
+          <span style={{ color: '#ffffff', fontSize: '13px', letterSpacing: '1.5px', fontWeight: '600' }}>🔒 FILES PROCESSED IN MEMORY — NEVER STORED</span>
         </div>
       </div>
 
-      {/* Tools Grid */}
+      {/* ── STEP FLOW BAR (only on dashboard) ── */}
       {!activeTool && (
-        <div style={{ maxWidth: '900px', margin: '0 auto', padding: '32px 20px' }}>
-          <p style={{ color: '#64748b', fontSize: '13px', textAlign: 'center', marginBottom: '24px', letterSpacing: '1px', textTransform: 'uppercase', fontWeight: '600' }}>
-            Follow the steps in order for best results
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
-            {tools.map(tool => (
-              <div key={tool.id} onClick={() => tool.active && setActiveTool(tool.id)}
-                style={{
-                  background: tool.active ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.01)',
-                  borderRadius: '14px', padding: '20px',
-                  cursor: tool.active ? 'pointer' : 'default',
-                  border: `1px solid ${tool.active ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)'}`,
-                  opacity: tool.active ? 1 : 0.4,
-                  transition: 'all 0.2s',
-                  position: 'relative',
-                  overflow: 'hidden',
-                }}
-                onMouseOver={e => { if (tool.active) { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; e.currentTarget.style.borderColor = `${tool.color}55`; e.currentTarget.style.transform = 'translateY(-2px)'; } }}
-                onMouseOut={e => { if (tool.active) { e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'; e.currentTarget.style.transform = 'translateY(0)'; } }}>
-
-                {/* Step badge */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                  <span style={{ background: tool.active ? tool.color : '#374151', color: 'white', borderRadius: '8px', padding: '3px 10px', fontSize: '10px', fontWeight: '800', letterSpacing: '1px' }}>
-                    STEP {tool.step}
-                  </span>
-                  {!tool.active && <span style={{ background: '#374151', color: '#6b7280', borderRadius: '20px', padding: '2px 8px', fontSize: '9px', fontWeight: '700' }}>SOON</span>}
+        <div style={{ background: 'white', borderBottom: '1px solid #e8ecf0', padding: '14px 20px', overflowX: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', minWidth: 'max-content', margin: '0 auto' }}>
+            {tools.filter(t => t.active).map((t, i, arr) => (
+              <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <div onClick={() => setActiveTool(t.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 13px', borderRadius: '20px', background: '#eef2ff', border: '1px solid #dce6ff', cursor: 'pointer', transition: 'all 0.15s' }}
+                  onMouseOver={e => { e.currentTarget.style.background = '#1a3c6e'; e.currentTarget.querySelector('span:last-child').style.color = 'white'; }}
+                  onMouseOut={e => { e.currentTarget.style.background = '#eef2ff'; e.currentTarget.querySelector('span:last-child').style.color = '#1a3c6e'; }}>
+                  <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '50%', width: '19px', height: '19px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '800', flexShrink: 0 }}>{t.step}</span>
+                  <span style={{ color: '#1a3c6e', fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap' }}>{t.title}</span>
                 </div>
-
-                <div style={{ fontSize: '28px', marginBottom: '8px' }}>{tool.icon}</div>
-                <h3 style={{ color: '#f1f5f9', margin: '0 0 6px', fontSize: '14px', fontWeight: '700' }}>{tool.title}</h3>
-                <p style={{ color: '#64748b', fontSize: '11px', margin: '0', lineHeight: '1.5' }}>{tool.desc}</p>
-
-                {/* Accent line */}
-                {tool.active && <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '2px', background: `linear-gradient(90deg, ${tool.color}, transparent)`, borderRadius: '0 0 14px 14px' }} />}
+                {i < arr.length - 1 && <span style={{ color: '#c8d0dc', fontSize: '16px', flexShrink: 0 }}>→</span>}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Tool views */}
-      <div style={{ maxWidth: '780px', margin: '0 auto', padding: activeTool ? '20px' : '0 20px' }}>
+      {/* ── TOOL CARDS GRID ── */}
+      {!activeTool && (
+        <div style={{ maxWidth: '820px', margin: '0 auto', padding: '32px 20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            {tools.map(tool => (
+              <div key={tool.id} onClick={() => tool.active && setActiveTool(tool.id)}
+                style={{
+                  background: 'white',
+                  borderRadius: '14px',
+                  padding: '22px 24px',
+                  cursor: tool.active ? 'pointer' : 'default',
+                  border: `2px solid #eef0f5`,
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                  opacity: tool.active ? 1 : 0.45,
+                  transition: 'all 0.2s',
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+                onMouseOver={e => { if (tool.active) { e.currentTarget.style.borderColor = tool.color; e.currentTarget.style.boxShadow = `0 6px 20px ${tool.color}22`; e.currentTarget.style.transform = 'translateY(-2px)'; } }}
+                onMouseOut={e => { if (tool.active) { e.currentTarget.style.borderColor = '#eef0f5'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; } }}>
+
+                {/* Colored top accent */}
+                {tool.active && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '3px', background: tool.color, borderRadius: '14px 14px 0 0' }} />}
+
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '32px' }}>{tool.icon}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {!tool.active && <span style={{ background: '#e5e7eb', color: '#9ca3af', borderRadius: '20px', padding: '2px 10px', fontSize: '10px', fontWeight: '700' }}>SOON</span>}
+                    <span style={{ background: tool.active ? tool.color : '#e5e7eb', color: 'white', borderRadius: '8px', padding: '3px 10px', fontSize: '10px', fontWeight: '800', letterSpacing: '0.5px' }}>
+                      STEP {tool.step}
+                    </span>
+                  </div>
+                </div>
+                <h3 style={{ color: '#1a3c6e', margin: '0 0 7px', fontSize: '15px', fontWeight: '700' }}>{tool.title}</h3>
+                <p style={{ color: '#6b7280', fontSize: '12px', margin: '0', lineHeight: '1.6' }}>{tool.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── ACTIVE TOOL VIEW ── */}
+      <div style={{ maxWidth: '780px', margin: '0 auto', padding: activeTool ? '24px 20px' : '0' }}>
         {activeTool === 'duplicate'            && <DuplicateTool              onBack={() => setActiveTool(null)} />}
         {activeTool === 'splitter'             && <SplitterTool               onBack={() => setActiveTool(null)} />}
         {activeTool === 'categorise'           && <CategoriseTool             onBack={() => setActiveTool(null)} />}
@@ -203,7 +221,7 @@ export default function Home() {
         {activeTool === 'qc-bank'              && <QCBankExtractionTool       onBack={() => setActiveTool(null)} />}
       </div>
 
-      <div style={{ textAlign: 'center', padding: '20px', color: '#1e3a5f', fontSize: '11px', letterSpacing: '1px' }}>
+      <div style={{ textAlign: 'center', padding: '24px', color: '#b0bac8', fontSize: '11px', letterSpacing: '1px' }}>
         POWERED BY CLAUDE AI • ANTHROPIC
       </div>
     </main>
@@ -286,7 +304,7 @@ function TransactionAnalysisTool({ onBack }) {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px', flexWrap: 'wrap' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 8</span>
@@ -406,7 +424,7 @@ function StatementTrackerTool({ onBack }) {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 6</span>
@@ -566,7 +584,7 @@ function DescriptionCategoriserTool({ onBack }) {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 7</span>
@@ -696,7 +714,7 @@ function DuplicateTool({ onBack }) {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 1</span>
@@ -767,7 +785,7 @@ function SplitterTool({ onBack }) {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 2</span>
@@ -891,7 +909,7 @@ function CategoriseTool({ onBack }) {
   const getFolderIcon = (folderName) => { const cat = ALL_CATEGORIES.find(c => c.folder === folderName); return cat ? cat.icon : '📁'; };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 3</span>
@@ -1034,7 +1052,7 @@ function StampingTool({ onBack }) {
   );
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 4</span>
@@ -1156,7 +1174,7 @@ function ExtractionTool({ onBack }) {
   if (activeType === 'bank')    return <BankExtractTool    onBack={() => setActiveType(null)} />;
   if (activeType === 'tax')     return <TaxExtractTool     onBack={() => setActiveType(null)} />;
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 5</span>
@@ -1219,7 +1237,7 @@ function InvoiceExtractTool({ onBack }) {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Extraction</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 5A</span>
@@ -1317,7 +1335,7 @@ function BankExtractTool({ onBack }) {
   };
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Extraction</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 5B</span>
@@ -1442,7 +1460,7 @@ function BankExtractTool({ onBack }) {
 // ─────────────────────────────────────────────────────────────
 function TaxExtractTool({ onBack }) {
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Extraction</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 5C</span>
@@ -1527,7 +1545,7 @@ function QCBankExtractionTool({ onBack }) {
   );
 
   return (
-    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 4px 32px rgba(0,0,0,0.5)' }}>
+    <div style={{ background: 'white', borderRadius: '16px', padding: '36px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
       <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#1a3c6e', cursor: 'pointer', fontSize: '14px', marginBottom: '20px', padding: '0' }}>← Back to Dashboard</button>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
         <span style={{ background: '#1a3c6e', color: 'white', borderRadius: '20px', padding: '3px 12px', fontSize: '11px', fontWeight: '700' }}>STEP 9</span>
