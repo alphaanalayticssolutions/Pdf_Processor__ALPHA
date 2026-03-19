@@ -65,6 +65,15 @@ Some PDF lines have redacted account numbers shown as dark boxes, blacked-out se
 
 RUNNING BALANCE: Use the statement's own printed running balance column if available. If not available, calculate cumulative balance after each transaction.
 
+CRITICAL — NEVER CONFUSE BALANCE WITH AMOUNT:
+Bank statements have two separate columns: AMOUNT (the transaction value) and BALANCE/RUNNING BALANCE (the account total after the transaction).
+- The AMOUNT column is what you extract as debit or credit
+- The BALANCE column is what you extract as running_balance
+- NEVER put a balance value into the debit or credit field
+- A value like $115,069.70 that equals approximately the account balance is a RUNNING BALANCE — not a transaction amount
+- If you see a large round number that matches the approximate account balance, it is the balance column, NOT a deposit or withdrawal
+- Transaction amounts are typically smaller than the account balance
+
 CRITICAL — NO DUPLICATE TRANSACTIONS:
 De-duplication rules:
 1. CHECK NUMBERS: Each check number appears only ONCE.
