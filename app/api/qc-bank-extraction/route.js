@@ -193,7 +193,6 @@ function runValidations(pdfSummaries, excelData) {
     }
 
     // Get Excel transactions for this PDF
-    // Match by: (1) fileName column exact, (2) fileName column contains PDF name, (3) all rows if only 1 PDF
     const pdfBaseName = pdf.fileName.replace(/\.pdf$/i, '').toLowerCase();
     let txs = excelData.transactions.filter(t => {
       if (!t.fileName) return false;
@@ -216,8 +215,6 @@ function runValidations(pdfSummaries, excelData) {
     const txsWithBal = txs.filter(t => t.balance > 0);
     const openBalRow = txs.find(t => t.openBal > 0);
 
-    // Reverse-engineer opening balance from first transaction when no openBal column
-    // opening = first_balance + first_debit - first_credit
     let excelOpen = 0;
     if (openBalRow?.openBal > 0) {
       excelOpen = openBalRow.openBal;
@@ -228,6 +225,12 @@ function runValidations(pdfSummaries, excelData) {
 
     const checks = [];
 
+    // ── Build category breakdown string for debit detail ──
+    const debitCatBreakdown = (pdf.debitCategories?.length > 0)
+      ? '. Category breakdown: ' + pdf.debitCategories
+          .map(c => `${c.label} $${c.amount.toFixed(2)}`).join(' | ')
+      : '';
+
     // 1. Total Credits
     const creditDiff = pdf.totalCredits != null ? +Math.abs(pdf.totalCredits - excelCredits).toFixed(2) : null;
     checks.push({
@@ -237,9 +240,11 @@ function runValidations(pdfSummaries, excelData) {
       pdfVal:   pdf.totalCredits != null ? `$${pdf.totalCredits.toFixed(2)}` : 'N/A',
       excelVal: `$${excelCredits.toFixed(2)}`,
       diff:     creditDiff != null ? `$${creditDiff.toFixed(2)}` : null,
-      detail:   creditDiff === null ? 'PDF summary unavailable' :
-                creditDiff < 1     ? `Match ✓` :
-                `Off by $${creditDiff.toFixed(2)}`,
+      detail:   creditDiff === null
+                ? 'PDF summary unavailable'
+                : creditDiff < 1
+                  ? `PDF $${pdf.totalCredits.toFixed(2)} vs Extracted $${excelCredits.toFixed(2)} — perfect match`
+                  : `PDF $${pdf.totalCredits.toFixed(2)} vs Extracted $${excelCredits.toFixed(2)} — off by $${creditDiff.toFixed(2)}`,
     });
 
     // 2. Total Debits
@@ -251,9 +256,11 @@ function runValidations(pdfSummaries, excelData) {
       pdfVal:   pdf.totalDebits != null ? `$${pdf.totalDebits.toFixed(2)}` : 'N/A',
       excelVal: `$${excelDebits.toFixed(2)}`,
       diff:     debitDiff != null ? `$${debitDiff.toFixed(2)}` : null,
-      detail:   debitDiff === null ? 'PDF summary unavailable' :
-                debitDiff < 1     ? 'Match ✓' :
-                `Off by $${debitDiff.toFixed(2)}`,
+      detail:   debitDiff === null
+                ? 'PDF summary unavailable'
+                : debitDiff < 1
+                  ? `PDF $${pdf.totalDebits.toFixed(2)} vs Extracted $${excelDebits.toFixed(2)} — perfect match${debitCatBreakdown}`
+                  : `PDF $${pdf.totalDebits.toFixed(2)} vs Extracted $${excelDebits.toFixed(2)} — off by $${debitDiff.toFixed(2)}${debitCatBreakdown}`,
     });
 
     // 3. Opening Balance
@@ -266,8 +273,8 @@ function runValidations(pdfSummaries, excelData) {
       excelVal: excelOpen > 0 ? `$${excelOpen.toFixed(2)}` : 'Not found in Excel',
       diff:     openDiff != null ? `$${openDiff.toFixed(2)}` : null,
       detail:   openDiff === null ? 'Opening balance column not in Excel — verify manually' :
-                openDiff < 1     ? 'Match ✓' :
-                `Mismatch $${openDiff.toFixed(2)} — reverse-engineered from first transaction balance`,
+                openDiff < 1     ? `PDF $${pdf.openingBalance.toFixed(2)} vs Extracted $${excelOpen.toFixed(2)} — perfect match` :
+                `PDF $${pdf.openingBalance.toFixed(2)} vs Extracted $${excelOpen.toFixed(2)} — off by $${openDiff.toFixed(2)} (reverse-engineered from first transaction balance)`,
     });
 
     // 4. Closing Balance — math check
@@ -281,9 +288,11 @@ function runValidations(pdfSummaries, excelData) {
       pdfVal:   pdf.closingBalance != null ? `$${pdf.closingBalance.toFixed(2)}` : 'N/A',
       excelVal: mathClose != null ? `$${mathClose.toFixed(2)}` : 'N/A',
       diff:     closeDiff != null ? `$${closeDiff.toFixed(2)}` : null,
-      detail:   closeDiff === null ? 'Cannot compute — balances missing' :
-                closeDiff < 1     ? `Match ✓ (Opening $${pdf.openingBalance.toFixed(2)} + Credits - Debits = $${mathClose.toFixed(2)})` :
-                `Mismatch — expected $${pdf.closingBalance.toFixed(2)}, computed $${mathClose.toFixed(2)}`,
+      detail:   closeDiff === null
+                ? 'Cannot compute — balances missing'
+                : closeDiff < 1
+                  ? `Opening $${pdf.openingBalance.toFixed(2)} + Credits $${excelCredits.toFixed(2)} − Debits $${excelDebits.toFixed(2)} = Expected $${mathClose.toFixed(2)}, Closing $${pdf.closingBalance.toFixed(2)} — perfect match`
+                  : `Opening $${pdf.openingBalance.toFixed(2)} + Credits $${excelCredits.toFixed(2)} − Debits $${excelDebits.toFixed(2)} = Computed $${mathClose.toFixed(2)}, PDF Closing $${pdf.closingBalance.toFixed(2)} — off by $${closeDiff.toFixed(2)}`,
     });
 
     // 5. Running Balance Integrity
@@ -294,7 +303,7 @@ function runValidations(pdfSummaries, excelData) {
         running = +(running + t.credit - t.debit).toFixed(2);
         if (Math.abs(running - t.balance) > 1) {
           runErrors.push({ row: t.rowNum, date: t.date, expected: running.toFixed(2), found: t.balance.toFixed(2) });
-          running = t.balance; // resync
+          running = t.balance;
         }
       });
     }
@@ -311,8 +320,6 @@ function runValidations(pdfSummaries, excelData) {
     });
 
     // 6. Transaction Count Match
-    // PDF summary tables often don't show a transaction count column.
-    // Only flag if PDF explicitly provides a non-zero count AND it differs.
     const pdfCount = pdf.transactionCount && pdf.transactionCount > 0 ? pdf.transactionCount : null;
     const countDiff = pdfCount != null ? Math.abs(pdfCount - txCount) : null;
     checks.push({
@@ -326,7 +333,7 @@ function runValidations(pdfSummaries, excelData) {
                 `${countDiff} transaction(s) difference`,
     });
 
-    // 7. Missing Transactions — only flag when amounts mismatch (NOT on count alone)
+    // 7. Missing Transactions
     const missingLikely   = (debitDiff != null && debitDiff > 1) || (creditDiff != null && creditDiff > 1);
     const missingPossible = pdfCount != null && countDiff != null && countDiff > 0 && !missingLikely;
     checks.push({
@@ -375,21 +382,14 @@ function runValidations(pdfSummaries, excelData) {
     });
 
     // Category-level breakdown
-    // Only match SUMMARY-level categories (e.g. "Checks Paid", "ATM & Debit Card")
-    // Skip individual check entries like "CHECK 1001", "CHECK 1002" etc.
     const categoryChecks = [];
     if (pdf.debitCategories?.length > 0) {
       pdf.debitCategories.forEach((cat) => {
         const label = (cat.label || '').toLowerCase();
 
-        // Skip individual check entries — these are transaction-level, not summary-level
-        // Pattern: "CHECK 1001", "Check #1234", "1234 ^", numbered checks etc.
         const isIndividualCheck = /^check\s*#?\s*\d+/i.test(cat.label) ||
                                    /^\d{3,6}\s*[\*\^]?$/.test(cat.label.trim());
         if (isIndividualCheck) return;
-
-        // Also skip if amount is very small relative to likely category totals
-        // (individual items rarely appear in Balance Summary)
 
         let extracted = 0;
         if (label.includes('check')) {
@@ -403,10 +403,9 @@ function runValidations(pdfSummaries, excelData) {
         } else if (label.includes('other withdrawal')) {
           extracted = txs.filter(t => /owner withdrawal|cash withdrawal/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
         } else if (label.includes('withdrawal') || label.includes('debit')) {
-          // Catch-all "Withdrawals and Debits" — compare against ALL debits
           extracted = txs.reduce((s, t) => s + t.debit, 0);
         } else {
-          return; // unknown category — skip
+          return;
         }
 
         const diff = +Math.abs(cat.amount - extracted).toFixed(2);
@@ -538,7 +537,6 @@ export async function POST(request) {
     const totalChecks = reportResults.flatMap(r => r.checks).length;
     const overallRisk = totalFails >= 3 ? 'high' : totalFails >= 1 ? 'medium' : totalWarns > 3 ? 'medium' : 'low';
 
-    // Compute overall score: each fail = -10pts, each warn = -3pts, base 100
     const overallScore = Math.max(0, Math.min(100, Math.round(100 - (totalFails * 10) - (totalWarns * 3))));
 
     return Response.json({

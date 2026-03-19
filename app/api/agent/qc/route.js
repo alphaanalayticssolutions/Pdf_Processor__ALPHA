@@ -369,16 +369,9 @@ Return ONLY valid JSON, no markdown:
 }
 
 // ─────────────────────────────────────────────────────────────
-// BANK QC REPORT
-// ─────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────
 // CATEGORY-LEVEL BREAKDOWN
-// Groups extracted transactions into the same categories the bank
-// uses in its summary section, then compares vs PDF debitItems.
-// This pinpoints WHICH category has the gap — not just that a gap exists.
 // ─────────────────────────────────────────────────────────────
 function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
-  // Categorise each extracted debit transaction
   const extractedByCategory = {};
 
   fileTransactions.forEach((t) => {
@@ -410,26 +403,20 @@ function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
     ) {
       category = "Other Withdrawals";
     } else {
-      // Everything else: online transfers, ACH, wire, Zelle, bill pay, tax, mortgage
       category = "Electronic Withdrawals";
     }
 
     extractedByCategory[category] = (extractedByCategory[category] || 0) + debit;
   });
 
-  // Round all extracted totals
   Object.keys(extractedByCategory).forEach((k) => {
     extractedByCategory[k] = +extractedByCategory[k].toFixed(2);
   });
 
-  // If no PDF debitItems available, return simple totals only
   if (!pdfDebitItems || pdfDebitItems.length === 0) {
     return { available: false, extractedByCategory };
   }
 
-  // Normalise PDF category labels to match our keys.
-  // Different banks use different names for the same categories.
-  // "Withdrawals and Debits" is Hinsdale Bank's catch-all for checks+other.
   const normalise = (label) => {
     const l = (label || "").toLowerCase();
     if (l.includes("check"))                                                    return "Checks Paid";
@@ -437,17 +424,10 @@ function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
     if (l.includes("electronic") || l.includes("transfer"))                    return "Electronic Withdrawals";
     if (l.includes("other withdrawal"))                                         return "Other Withdrawals";
     if (l.includes("fee") || l.includes("charge") || l.includes("service"))    return "Fees";
-    // "Withdrawals and Debits" — Hinsdale Bank catch-all for checks + other debits.
-    // When totals match overall, category-level mapping differences are cosmetic.
-    // Return a sentinel so we can skip this in diff calculation when totals match.
     if (l.includes("withdrawal") || l.includes("debit"))                       return "__ALL_DEBITS__";
     return label;
   };
 
-  // Build per-category diff
-  // Skip __ALL_DEBITS__ sentinel — these are bank-specific catch-all labels
-  // (e.g. Hinsdale "Withdrawals and Debits") that don't map to a single category.
-  // When total debits match, these label differences are cosmetic only.
   const totalDebitsMatch = pdfDebitItems.length > 0 &&
     Math.abs(pdfDebitItems.reduce((s,i) => s + parseFloat(i.amount||0), 0) -
              Object.values(extractedByCategory).reduce((s,v) => s+v, 0)) < 2;
@@ -455,7 +435,7 @@ function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
   const categoryDiffs = pdfDebitItems
     .map((item) => {
       const normKey = normalise(item.label);
-      if (normKey === "__ALL_DEBITS__") return null; // skip catch-all labels
+      if (normKey === "__ALL_DEBITS__") return null;
       const pdfAmt    = +parseFloat(item.amount).toFixed(2);
       const extracted = +(extractedByCategory[normKey] || 0).toFixed(2);
       const diff      = +(pdfAmt - extracted).toFixed(2);
@@ -470,17 +450,19 @@ function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
     })
     .filter(Boolean);
 
-  // Flag which categories have gaps > $1
   const missingCategories = categoryDiffs.filter((c) => Math.abs(c.diff) > 1);
 
   return {
     available:         true,
     categoryDiffs,
-    missingCategories, // the specific categories where extraction is short or over
+    missingCategories,
     extractedByCategory,
   };
 }
 
+// ─────────────────────────────────────────────────────────────
+// BANK QC REPORT
+// ─────────────────────────────────────────────────────────────
 async function runBankQcReport(toolOutput) {
   const statements           = toolOutput.statements           || [];
   const transactions         = toolOutput.transactions         || [];
@@ -495,7 +477,6 @@ async function runBankQcReport(toolOutput) {
   const totalCreditsSum = +statements.reduce((s, st) => s + (st.totalCredits || 0), 0).toFixed(2);
   const totalDebitsSum  = +statements.reduce((s, st) => s + (st.totalDebits  || 0), 0).toFixed(2);
 
-  // Deterministic signals — two paths for likelyMissingTx
   const computedSignals = statements.map((s) => {
     const rec = reconciliation.find((r) => r.file === s.file) || {};
     const balanceMismatch = s.openingBalance != null && s.closingBalance != null && s.totalDebits != null && s.totalCredits != null
@@ -505,11 +486,6 @@ async function runBankQcReport(toolOutput) {
     const creditMismatch  = rec.pdfCredits != null ? Math.abs(rec.pdfCredits - (rec.rowCredits || 0)) > 1 : null;
     const debitDiff       = rec.pdfDebits  != null ? +Math.abs(rec.pdfDebits  - (rec.rowDebits  || 0)).toFixed(2) : null;
     const creditDiff      = rec.pdfCredits != null ? +Math.abs(rec.pdfCredits - (rec.rowCredits || 0)).toFixed(2) : null;
-    // Path A: PDF data available — use diff > $100
-    // Path B: PDF data unavailable — fall back to balance math
-    // CRITICAL: if debitsMatch AND creditsMatch → totals are confirmed correct
-    //           → likelyMissingTx must be false regardless of category breakdown.
-    //           Category mismatches when totals match = label cosmetics, not real gaps.
     const bothMatch = (debitMismatch === false) && (creditMismatch === false);
     const likelyMissingTx = bothMatch
       ? false
@@ -517,18 +493,15 @@ async function runBankQcReport(toolOutput) {
         ? (debitMismatch || creditMismatch) && Math.max(debitDiff ?? 0, creditDiff ?? 0) > 100
         : balanceMismatch === true;
 
-    // Category-level breakdown — pinpoints WHICH section has the gap
-    // Uses extracted transactions for this specific file only
-    const fileTxs = transactions.filter((t) => t.description !== undefined); // all tx (file filter via statements)
     const categoryBreakdown = buildCategoryBreakdown(
-      transactions, // passed as-is; buildCategoryBreakdown uses all debits
+      transactions,
       rec.debitItems || []
     );
 
     return {
       file: s.file, balanceMismatch, debitMismatch, creditMismatch,
       debitDiff, creditDiff, likelyMissingTx, reconcAvailable,
-      categoryBreakdown, // per-category PDF vs extracted comparison
+      categoryBreakdown,
     };
   });
 
@@ -539,7 +512,7 @@ async function runBankQcReport(toolOutput) {
       rowDebits: r.rowDebits, rowCredits: r.rowCredits,
       debitsMatch: r.debitsMatch, creditsMatch: r.creditsMatch,
       debitLabel: r.debitLabel, creditLabel: r.creditLabel,
-      debitItems: r.debitItems || [],   // per-category PDF amounts
+      debitItems: r.debitItems || [],
       creditItems: r.creditItems || [],
       error: r.error || null,
     })),
@@ -557,29 +530,46 @@ ${JSON.stringify(context)}
 MANDATORY — use computedSignals directly, do NOT override:
 - likelyMissingTx: true  → "Missing Transactions" = fail
 - likelyMissingTx: false → "Missing Transactions" = pass
-- debitMismatch: true    → "Total Debits" = fail, show debitDiff
-- creditMismatch: true   → "Total Credits" = fail, show creditDiff
-- balanceMismatch: true  → "Closing Balance Integrity" = fail
+- debitMismatch: true    → "Total Debits (PDF vs Extracted)" = fail, show debitDiff
+- creditMismatch: true   → "Total Credits (PDF vs Extracted)" = fail, show creditDiff
+- balanceMismatch: true  → "Closing Balance Match" = fail
 - reconcAvailable: false → note "PDF summary unavailable" in Credits/Debits rows
 
 CATEGORY-LEVEL ANALYSIS — use categoryBreakdown from computedSignals:
-Each signal has a categoryBreakdown object. If available=true, it contains categoryDiffs array showing exactly which PDF section (Checks Paid, ATM & Debit Card, Electronic Withdrawals, Other Withdrawals, Fees) has a gap.
-- For "Total Debits" details: if categoryBreakdown.available=true, list WHICH categories match and which don't
-- For "Missing Transactions" details: name the specific category where gap exists (e.g. "Electronic Withdrawals short by $500")
+Each signal has a categoryBreakdown object. If available=true, it contains categoryDiffs array showing exactly which PDF section has a gap.
+- For "Total Debits" details: list ALL debitItems from reconciliation as category breakdown
 - missingCategories array = categories with diff > $1 — use these directly
-- Example detail: "Electronic Withdrawals: PDF $100,573.68 vs Extracted $100,073.68 — $500 short (1 missing transaction)"
+
+## DETAIL FORMAT RULES — FOLLOW EXACTLY FOR THESE 3 CHECKS:
+
+Total Credits:
+  - Match:    "PDF $X.XX vs Extracted $X.XX — perfect match"
+  - Mismatch: "PDF $X.XX vs Extracted $X.XX — off by $X.XX"
+  - No data:  "PDF summary unavailable"
+
+Total Debits:
+  - Match:    "PDF $X.XX vs Extracted $X.XX — perfect match. Category breakdown: Label1 $X.XX | Label2 $X.XX"
+  - Mismatch: "PDF $X.XX vs Extracted $X.XX — off by $X.XX. Category breakdown: Label1 $X.XX | Label2 $X.XX"
+  - No data:  "PDF summary unavailable"
+  (List ALL debitItems from reconciliation separated by " | ". If no debitItems, omit category breakdown.)
+
+Closing Balance Match:
+  - Match:    "Opening $X.XX + Credits $X.XX − Debits $X.XX = Expected $X.XX, Closing $X.XX — perfect match"
+  - Mismatch: "Opening $X.XX + Credits $X.XX − Debits $X.XX = Computed $X.XX, PDF Closing $X.XX — off by $X.XX"
+  - No data:  "Cannot compute — balances missing"
 
 Return ONLY this JSON, no markdown:
 {
   "validationTable": [
-    {"check": "Total Credits (PDF vs Extracted)",        "status": "pass|warn|fail", "details": "..."},
-    {"check": "Total Debits (PDF vs Extracted)",         "status": "pass|warn|fail", "details": "..."},
-    {"check": "Net Change (Opening + Credits - Debits)", "status": "pass|warn|fail", "details": "Opening $X + Credits $Y - Debits $Z = Expected $A, Closing $B — match/mismatch"},
-    {"check": "Closing Balance Integrity",               "status": "pass|warn|fail", "details": "..."},
-    {"check": "Running Balance Integrity",               "status": "pass|warn|fail", "details": "X errors / No errors"},
-    {"check": "Missing Transactions",                    "status": "pass|warn|fail", "details": "..."},
-    {"check": "Duplicate Transactions",                  "status": "pass|warn|fail", "details": "X found / None"},
-    {"check": "Date Coverage",                           "status": "pass|warn|fail", "details": "Full/Limited — detail"}
+    {"check": "Total Credits (PDF vs Extracted)",  "status": "pass|warn|fail", "details": "PDF $X.XX vs Extracted $X.XX — perfect match"},
+    {"check": "Total Debits (PDF vs Extracted)",   "status": "pass|warn|fail", "details": "PDF $X.XX vs Extracted $X.XX — perfect match. Category breakdown: Label1 $X.XX | Label2 $X.XX"},
+    {"check": "Opening Balance Match",             "status": "pass|warn|fail", "details": "PDF $X.XX vs Extracted $X.XX — perfect match / off by $X.XX / not found in Excel"},
+    {"check": "Closing Balance Match",             "status": "pass|warn|fail", "details": "Opening $X.XX + Credits $X.XX − Debits $X.XX = Expected $X.XX, Closing $X.XX — perfect match"},
+    {"check": "Running Balance Integrity",         "status": "pass|warn|fail", "details": "No errors ✓ / X row(s) with balance mismatch"},
+    {"check": "Transaction Count Match",           "status": "pass|warn|fail", "details": "X rows in extracted — PDF count not published / match / off by X"},
+    {"check": "Missing Transactions",              "status": "pass|warn|fail", "details": "None detected ✓ / Likely — debits off $X.XX, credits off $X.XX"},
+    {"check": "Duplicate Transactions",            "status": "pass|warn|fail", "details": "None detected ✓ / X possible duplicate(s)"},
+    {"check": "Date Coverage",                     "status": "pass|warn|fail", "details": "Full coverage ✓ / X gap(s) — longest X days"}
   ],
   "transactionIssues": [],
   "patternInsights": ["..."],
@@ -589,11 +579,11 @@ Return ONLY this JSON, no markdown:
 }
 
 Rules:
-- Exactly 8 rows in the order above
-- Row 3 is Net Change — bank accounts are NOT double-entry books
+- Exactly 9 rows in the order above
+- Row 4 (Closing Balance Match) shows the full arithmetic — not just a match/fail label
 - Credits that match PDF deposit totals are NOT OCR errors
 - transactionIssues: from runningBalanceErrors only, max 15, empty [] if none
-- patternInsights: 4–6 bullets citing actual amounts. IMPORTANT: amountOutliers show "Nx the median" where N is a SIZE MULTIPLIER not an instance count — do NOT say "N instances of amount X". Say "amount X is Nx the median transaction size".
+- patternInsights: 4–6 bullets citing actual amounts. amountOutliers show "Nx the median" where N is a SIZE MULTIPLIER not an instance count — do NOT say "N instances of amount X". Say "amount X is Nx the median transaction size".
 - riskLevel: low = all pass, medium = 1-2 minor, high = balance mismatch or missing transactions
 - recommendations: 3–5 specific steps based on actual issues`;
 
@@ -656,8 +646,6 @@ export async function POST(req) {
       return NextResponse.json({ error: "Both toolName and toolOutput are required" }, { status: 400 });
     }
 
-    // Merge metadata — but NEVER let null metadata overwrite reconciliation
-    // that was embedded in qcData by the extraction route
     const enriched = { ...toolOutput, ...(metadata || {}) };
     if (!enriched.reconciliation?.length && toolOutput.reconciliation?.length) {
       enriched.reconciliation = toolOutput.reconciliation;

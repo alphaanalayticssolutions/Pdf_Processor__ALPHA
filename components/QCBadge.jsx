@@ -26,9 +26,9 @@ const SEV_COLORS = {
 };
 
 const RISK_CONFIG = {
-  low:    { emoji: "🟢", label: "Low — Data reliable",    bg: "#dcfce7", color: "#166534", border: "#86efac" },
+  low:    { emoji: "🟢", label: "Low — Data reliable",          bg: "#dcfce7", color: "#166534", border: "#86efac" },
   medium: { emoji: "🟡", label: "Medium — Usable with caution", bg: "#fef9c3", color: "#713f12", border: "#fde047" },
-  high:   { emoji: "🔴", label: "High — Not reliable",   bg: "#fee2e2", color: "#7f1d1d", border: "#fca5a5" },
+  high:   { emoji: "🔴", label: "High — Not reliable",          bg: "#fee2e2", color: "#7f1d1d", border: "#fca5a5" },
 };
 
 const CHECK_ICON = { pass: "✅", warn: "⚠️", fail: "❌" };
@@ -50,8 +50,9 @@ const tdStyle = {
   padding: "7px 10px",
   fontSize: "12px",
   color: "#374151",
-  lineHeight: 1.45,
+  lineHeight: 1.5,
   borderBottom: "1px solid #f3f4f6",
+  verticalAlign: "top",
 };
 
 // ── Bank QC Section Components ─────────────────────────────────
@@ -72,17 +73,54 @@ function SectionHeader({ emoji, title, badge }) {
   );
 }
 
+// ── Renders detail text — splits category breakdown onto its own line ──
+function DetailCell({ text, status }) {
+  const isFail = status === "fail";
+  const isWarn = status === "warn";
+  const color  = isFail ? "#b91c1c" : isWarn ? "#92400e" : "#16a34a";
+  const weight = isFail ? 600 : 400;
+
+  if (!text) return <td style={{ ...tdStyle, color, fontWeight: weight }}>—</td>;
+
+  // Split at ". Category breakdown:" so it renders on a new line
+  const catSplit = text.indexOf(". Category breakdown:");
+  if (catSplit === -1) {
+    return (
+      <td style={{ ...tdStyle, color, fontWeight: weight }}>
+        {text}
+      </td>
+    );
+  }
+
+  const mainText  = text.slice(0, catSplit);
+  const catText   = text.slice(catSplit + 2); // skip the ". "
+
+  return (
+    <td style={{ ...tdStyle, color, fontWeight: weight }}>
+      <div>{mainText}</div>
+      <div style={{ marginTop: "4px", color: "#6b7280", fontWeight: 400, fontSize: "11px", fontStyle: "italic" }}>
+        {catText}
+      </div>
+    </td>
+  );
+}
+
 function ValidationTable({ table }) {
   if (!table?.length) return null;
   return (
     <div style={{ marginBottom: "22px" }}>
       <SectionHeader emoji="📋" title="Core Validation" badge="Section 1" />
       <div style={{ borderRadius: "8px", overflow: "hidden", border: "1px solid #e5e7eb" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: "36%" }} />
+            <col style={{ width: "44px" }} />
+            <col /> {/* Details: fills remaining space, wraps */}
+          </colgroup>
           <thead>
             <tr>
-              <th style={{ ...thStyle, width: "38%" }}>Check</th>
-              <th style={{ ...thStyle, width: "48px", textAlign: "center" }}>Status</th>
+              <th style={thStyle}>Check</th>
+              <th style={{ ...thStyle, textAlign: "center" }}>Status</th>
               <th style={thStyle}>Details</th>
             </tr>
           </thead>
@@ -94,13 +132,7 @@ function ValidationTable({ table }) {
                 <tr key={i} style={{ background: isFail ? "#fff8f8" : isWarn ? "#fffdf0" : "#fff" }}>
                   <td style={{ ...tdStyle, fontWeight: 500, color: "#374151" }}>{row.check}</td>
                   <td style={{ ...tdStyle, textAlign: "center", fontSize: "14px" }}>{CHECK_ICON[row.status] || "⚠️"}</td>
-                  <td style={{
-                    ...tdStyle,
-                    color: isFail ? "#b91c1c" : isWarn ? "#92400e" : "#16a34a",
-                    fontWeight: isFail ? 600 : 400,
-                  }}>
-                    {row.details}
-                  </td>
+                  <DetailCell text={row.details} status={row.status} />
                 </tr>
               );
             })}
@@ -230,7 +262,7 @@ function BankRecommendations({ recommendations }) {
   );
 }
 
-// ── Shared Components (unchanged) ─────────────────────────────
+// ── Shared Components ──────────────────────────────────────────
 
 function ScoreBar({ score, color }) {
   return (
@@ -285,11 +317,11 @@ function ScoreBreakdown({ breakdown }) {
 // ── Main Component ─────────────────────────────────────────────
 
 export default function QCBadge({ toolName, toolOutput, metadata }) {
-  const [qcResult, setQcResult] = useState(null);
-  const [loading, setLoading]   = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [error, setError]       = useState(null);
-  const [hasRun, setHasRun]     = useState(false);
+  const [qcResult,   setQcResult]   = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [modalOpen,  setModalOpen]  = useState(false);
+  const [error,      setError]      = useState(null);
+  const [hasRun,     setHasRun]     = useState(false);
 
   async function handleRunQC() {
     setLoading(true);
@@ -301,9 +333,6 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
         body: JSON.stringify({
           toolName,
           toolOutput,
-          // Fix 4 — metadata fallback: reconciliation is required for Section 1 of the
-          // bank QC report. If the caller didn't pass it, default to null so the backend
-          // gracefully skips those comparisons instead of crashing on undefined.
           metadata: {
             reconciliation: metadata?.reconciliation ?? null,
             ...(metadata || {}),
@@ -380,7 +409,7 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
             background: "#ffffff",
             borderRadius: "16px",
             padding: "28px 28px 24px",
-            width: "min(620px, 94vw)",
+            width: "min(680px, 94vw)",   // slightly wider to accommodate detail text
             maxHeight: "86vh",
             overflowY: "auto",
             boxShadow: "0 30px 80px rgba(0,0,0,0.28)",
@@ -428,17 +457,16 @@ export default function QCBadge({ toolName, toolOutput, metadata }) {
             {/* ── BANK EXTRACTION ONLY: 5 structured sections ── */}
             {isBank && bankReport && (
               <>
-                <ValidationTable      table={bankReport.validationTable} />
+                <ValidationTable        table={bankReport.validationTable} />
                 <TransactionIssuesTable issues={bankReport.transactionIssues} />
-                <PatternInsights      insights={bankReport.patternInsights} />
-                <RiskLevel            level={bankReport.riskLevel} explanation={bankReport.riskExplanation} />
-                <BankRecommendations  recommendations={bankReport.recommendations} />
-                {/* Divider before AI Extraction Verification */}
+                <PatternInsights        insights={bankReport.patternInsights} />
+                <RiskLevel              level={bankReport.riskLevel} explanation={bankReport.riskExplanation} />
+                <BankRecommendations    recommendations={bankReport.recommendations} />
                 <div style={{ borderTop: "1px solid #e5e7eb", margin: "6px 0 18px" }} />
               </>
             )}
 
-            {/* ── AI Extraction Verification (unchanged for all tools) ── */}
+            {/* ── AI Extraction Verification ── */}
             {isBank && (
               <p style={{ margin: "0 0 14px", fontSize: "11px", fontWeight: 600, color: "#9ca3af", letterSpacing: "0.08em", textTransform: "uppercase" }}>
                 AI Extraction Verification
