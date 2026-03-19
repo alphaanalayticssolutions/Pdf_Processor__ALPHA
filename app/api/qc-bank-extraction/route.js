@@ -24,37 +24,64 @@ async function readPDFSummary(base64PDF, fileName) {
           { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64PDF } },
           {
             type: 'text',
-            text: `Read this bank statement PDF and extract ONLY from the BALANCE SUMMARY / CHECKING SUMMARY table.
+            text: `You are a bank statement data extraction specialist. Your only job is to read the ACCOUNT SUMMARY or BALANCE SUMMARY table from this bank statement PDF and return structured JSON.
 
-This is the table near the top showing: Beginning Balance, + Deposits and Credits, - Withdrawals and Debits, Ending Balance, Service Charge Fees.
+## YOUR TASK
+Extract the high-level summary figures from the account summary section — NOT from individual transaction lines.
 
-DO NOT read from the Checks Paid section, ATM & Debit Card section, or any transaction detail sections.
-ONLY read the high-level summary categories.
+## WHERE TO LOOK
+Look for a summary table/section near the TOP of the statement. It may be labelled:
+- "Account Summary" / "Checking Account Summary"
+- "Balance Summary" / "Statement Summary"
+- "Summary of Account Activity"
+- Or a table showing: Beginning Balance → Deposits → Withdrawals → Ending Balance
 
-Return ONLY this JSON, nothing else:
+## WHAT TO EXTRACT
+Return ONLY this exact JSON structure, no markdown, no explanation:
 {
-  "bankName": "",
-  "accountHolder": "",
-  "accountNumber": "",
-  "statementPeriod": "",
-  "openingBalance": 0,
-  "closingBalance": 0,
-  "totalCredits": 0,
-  "totalDebits": 0,
+  "bankName": "Full bank name",
+  "accountHolder": "Account owner name as printed",
+  "accountNumber": "Last 4 digits only e.g. XXXX1234",
+  "statementPeriod": "e.g. January 1, 2022 - January 31, 2022",
+  "openingBalance": 0.00,
+  "closingBalance": 0.00,
+  "totalCredits": 0.00,
+  "totalDebits": 0.00,
   "transactionCount": 0,
-  "debitCategories": [{"label": "", "amount": 0}],
-  "creditCategories": [{"label": "", "amount": 0}]
+  "debitCategories": [
+    { "label": "Checks Paid", "amount": 0.00 },
+    { "label": "ATM & Debit Card Withdrawals", "amount": 0.00 }
+  ],
+  "creditCategories": [
+    { "label": "Deposits and Additions", "amount": 0.00 }
+  ]
 }
 
-Rules:
-- openingBalance: Beginning Balance value
-- closingBalance: Ending Balance value
-- totalDebits: sum ALL debit category lines PLUS service charge fees (they are both debits)
-- totalCredits: sum all credit/deposit lines
-- transactionCount: number shown in Instances/Count column next to Ending Balance line (total transactions)
-- debitCategories: ONLY the high-level summary rows e.g. "Checks Paid", "ATM & Debit Card Withdrawals", "Electronic Withdrawals", "Other Withdrawals", "Fees", "Withdrawals and Debits", "Service Charge Fees" — NOT individual check numbers
-- creditCategories: e.g. "Deposits and Additions", "Deposits and Credits"
-- Return ONLY valid JSON, no markdown`
+## FIELD RULES
+
+**openingBalance** — "Beginning Balance" or "Balance Forward" or "Previous Balance"
+**closingBalance** — "Ending Balance" or "New Balance" or "Closing Balance"
+**totalCredits** — Total of ALL deposit/credit lines (Deposits, Credits, Interest, etc.)
+**totalDebits** — Total of ALL withdrawal/debit lines INCLUDING service charges, fees, maintenance fees
+**transactionCount** — If shown as a count/instances column in summary table; use 0 if not shown
+**debitCategories** — ONLY high-level summary rows from the summary table. Common examples:
+  - "Checks Paid" (NOT individual check entries like "Check 1001")
+  - "ATM & Debit Card Withdrawals"
+  - "Electronic Withdrawals / ACH"
+  - "Other Withdrawals"
+  - "Service Charge Fees" / "Maintenance Fees"
+  - "Withdrawals and Debits" (catch-all for some banks)
+**creditCategories** — ONLY high-level summary rows:
+  - "Deposits and Additions"
+  - "Electronic Deposits / ACH Credits"
+  - "Interest Paid"
+
+## STRICT RULES
+- NEVER read from the "Checks Paid" detail section listing individual check numbers
+- NEVER read from the ATM transaction detail list
+- NEVER include individual transaction entries — ONLY the summary roll-up rows
+- If a value is not found, use null (not 0)
+- Return ONLY valid JSON — no prose, no markdown fences, no explanation`
           }
         ]
       }]
@@ -284,28 +311,31 @@ function runValidations(pdfSummaries, excelData) {
     });
 
     // 6. Transaction Count Match
-    const countDiff = pdf.transactionCount != null ? Math.abs(pdf.transactionCount - txCount) : null;
+    // PDF summary tables often don't show a transaction count column.
+    // Only flag if PDF explicitly provides a non-zero count AND it differs.
+    const pdfCount = pdf.transactionCount && pdf.transactionCount > 0 ? pdf.transactionCount : null;
+    const countDiff = pdfCount != null ? Math.abs(pdfCount - txCount) : null;
     checks.push({
       type:     'Transaction Count Match',
-      status:   countDiff === null ? 'warn' : countDiff === 0 ? 'pass' : countDiff <= 2 ? 'warn' : 'fail',
-      pdfVal:   pdf.transactionCount != null ? `${pdf.transactionCount}` : 'N/A',
+      status:   pdfCount === null ? 'pass' : countDiff === 0 ? 'pass' : countDiff <= 2 ? 'warn' : 'fail',
+      pdfVal:   pdfCount != null ? `${pdfCount}` : '—',
       excelVal: `${txCount}`,
       diff:     countDiff != null ? `${countDiff}` : null,
-      detail:   countDiff === null ? 'PDF count not found' :
+      detail:   pdfCount === null  ? `${txCount} row(s) in Excel — PDF count not published in summary` :
                 countDiff === 0   ? 'Match ✓' :
                 `${countDiff} transaction(s) difference`,
     });
 
-    // 7. Missing Transactions
-    const missingLikely = (debitDiff != null && debitDiff > 1) || (creditDiff != null && creditDiff > 1);
-    const missingPossible = countDiff != null && countDiff > 0;
+    // 7. Missing Transactions — only flag when amounts mismatch (NOT on count alone)
+    const missingLikely   = (debitDiff != null && debitDiff > 1) || (creditDiff != null && creditDiff > 1);
+    const missingPossible = pdfCount != null && countDiff != null && countDiff > 0 && !missingLikely;
     checks.push({
       type:     'Missing Transactions',
       status:   missingLikely ? 'fail' : missingPossible ? 'warn' : 'pass',
       pdfVal:   '—',
       excelVal: '—',
       diff:     null,
-      detail:   missingLikely  ? `Likely — total mismatch detected (debits off $${debitDiff?.toFixed(2) || 0}, credits off $${creditDiff?.toFixed(2) || 0})` :
+      detail:   missingLikely   ? `Likely — total mismatch detected (debits off $${debitDiff?.toFixed(2) || 0}, credits off $${creditDiff?.toFixed(2) || 0})` :
                 missingPossible ? `Possible — count differs by ${countDiff}` :
                 'None detected ✓',
     });
@@ -411,7 +441,7 @@ function runValidations(pdfSummaries, excelData) {
     }
     if (dateGaps.some(g => g.days > 10)) patterns.push(`Gap >10 days detected — possible missing pages`);
     if (debitDiff > 0 && countDiff === 0) patterns.push('Amount mismatch with same row count → likely OCR error, not missing transaction');
-    if (debitDiff > 0 && countDiff > 0) patterns.push('Both amount and count mismatch → likely missing transaction(s)');
+    if (debitDiff > 0 && pdfCount != null && countDiff > 0) patterns.push('Both amount and count mismatch → likely missing transaction(s)');
     if (txs.filter(t => t.credit === 0 && t.debit === 0).length > 0) {
       patterns.push(`${txs.filter(t => t.credit === 0 && t.debit === 0).length} row(s) with zero amounts — check extraction`);
     }
