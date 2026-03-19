@@ -536,22 +536,26 @@ MANDATORY — use computedSignals directly, do NOT override:
 - reconcAvailable: false → note "PDF summary unavailable" in Credits/Debits rows
 
 CATEGORY-LEVEL ANALYSIS — use categoryBreakdown from computedSignals:
-Each signal has a categoryBreakdown object. If available=true, it contains categoryDiffs array showing exactly which PDF section has a gap.
-- For "Total Debits" details: list ALL debitItems from reconciliation as category breakdown
-- missingCategories array = categories with diff > $1 — use these directly
+Each signal has a categoryBreakdown object. If available=true, use categoryDiffs to build per-category status.
+- missingCategories array = categories with diff > $1
 
 ## DETAIL FORMAT RULES — FOLLOW EXACTLY FOR THESE 3 CHECKS:
 
 Total Credits:
   - Match:    "PDF $X.XX vs Extracted $X.XX — perfect match"
-  - Mismatch: "PDF $X.XX vs Extracted $X.XX — off by $X.XX"
+  - Mismatch: "PDF $X.XX vs Extracted $X.XX — short by $X.XX"
   - No data:  "PDF summary unavailable"
 
 Total Debits:
-  - Match:    "PDF $X.XX vs Extracted $X.XX — perfect match. Category breakdown: Label1 $X.XX | Label2 $X.XX"
-  - Mismatch: "PDF $X.XX vs Extracted $X.XX — off by $X.XX. Category breakdown: Label1 $X.XX | Label2 $X.XX"
+  Build category breakdown from categoryDiffs. For EACH category use:
+  - diff < $1:              "Label matches ($X.XX)"
+  - PDF > Extracted:        "Label short by $X.XX (PDF $X.XX vs Extracted $X.XX)"
+  - PDF < Extracted:        "Label over by $X.XX (PDF $X.XX vs Extracted $X.XX)"
+  - Extracted = 0:          "Label missing $X.XX (PDF $X.XX vs Extracted $0.00)"
+  Join all categories with ", "
+  - Match:    "PDF $X.XX vs Extracted $X.XX — perfect match. Category breakdown: LabelA matches ($X.XX), LabelB matches ($X.XX)"
+  - Mismatch: "PDF $X.XX vs Extracted $X.XX — short by $X.XX. Category breakdown: LabelA matches ($X.XX), LabelB short by $X.XX (PDF $X.XX vs Extracted $X.XX), LabelC missing $X.XX (PDF $X.XX vs Extracted $0.00)"
   - No data:  "PDF summary unavailable"
-  (List ALL debitItems from reconciliation separated by " | ". If no debitItems, omit category breakdown.)
 
 Closing Balance Match:
   - Match:    "Opening $X.XX + Credits $X.XX − Debits $X.XX = Expected $X.XX, Closing $X.XX — perfect match"
@@ -562,7 +566,7 @@ Return ONLY this JSON, no markdown:
 {
   "validationTable": [
     {"check": "Total Credits (PDF vs Extracted)",  "status": "pass|warn|fail", "details": "PDF $X.XX vs Extracted $X.XX — perfect match"},
-    {"check": "Total Debits (PDF vs Extracted)",   "status": "pass|warn|fail", "details": "PDF $X.XX vs Extracted $X.XX — perfect match. Category breakdown: Label1 $X.XX | Label2 $X.XX"},
+    {"check": "Total Debits (PDF vs Extracted)",   "status": "pass|warn|fail", "details": "PDF $X.XX vs Extracted $X.XX — perfect match. Category breakdown: LabelA matches ($X.XX), LabelB short by $X.XX (PDF $X.XX vs Extracted $X.XX)"},
     {"check": "Opening Balance Match",             "status": "pass|warn|fail", "details": "PDF $X.XX vs Extracted $X.XX — perfect match / off by $X.XX / not found in Excel"},
     {"check": "Closing Balance Match",             "status": "pass|warn|fail", "details": "Opening $X.XX + Credits $X.XX − Debits $X.XX = Expected $X.XX, Closing $X.XX — perfect match"},
     {"check": "Running Balance Integrity",         "status": "pass|warn|fail", "details": "No errors ✓ / X row(s) with balance mismatch"},

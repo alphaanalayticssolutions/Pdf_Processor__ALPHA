@@ -225,11 +225,41 @@ function runValidations(pdfSummaries, excelData) {
 
     const checks = [];
 
-    // ── Build category breakdown string for debit detail ──
-    const debitCatBreakdown = (pdf.debitCategories?.length > 0)
-      ? '. Category breakdown: ' + pdf.debitCategories
-          .map(c => `${c.label} $${c.amount.toFixed(2)}`).join(' | ')
-      : '';
+    // ── Build detailed per-category breakdown with match/mismatch status ──
+    const buildCatBreakdown = () => {
+      if (!pdf.debitCategories?.length) return '';
+      const parts = pdf.debitCategories
+        .filter(cat => {
+          const isIndividualCheck = /^check\s*#?\s*\d+/i.test(cat.label) ||
+                                    /^\d{3,6}\s*[\*\^]?$/.test(cat.label.trim());
+          return !isIndividualCheck && cat.amount != null;
+        })
+        .map(cat => {
+          const label = (cat.label || '').toLowerCase();
+          let extracted = 0;
+          if (label.includes('check')) {
+            extracted = txs.filter(t => t.checkNo).reduce((s, t) => s + t.debit, 0);
+          } else if (label.includes('atm') || label.includes('debit card')) {
+            extracted = txs.filter(t => !t.checkNo && /card purchase|atm|non-chase atm|recurring card/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
+          } else if (label.includes('fee') || label.includes('charge') || label.includes('service') || label.includes('maintenance')) {
+            extracted = txs.filter(t => /fee|maintenance|service charge/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
+          } else if (label.includes('other withdrawal')) {
+            extracted = txs.filter(t => /owner withdrawal|cash withdrawal/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
+          } else if (label.includes('withdrawal') || label.includes('debit') || label.includes('electronic') || label.includes('transfer')) {
+            extracted = txs.filter(t => !t.checkNo && !/card purchase|atm|non-chase atm|fee|maintenance|owner withdrawal/i.test(t.description)).reduce((s, t) => s + t.debit, 0);
+          } else {
+            return `${cat.label} $${cat.amount.toFixed(2)}`;
+          }
+          extracted = +extracted.toFixed(2);
+          const diff = +(cat.amount - extracted).toFixed(2);
+          if (Math.abs(diff) < 1)  return `${cat.label} matches ($${cat.amount.toFixed(2)})`;
+          if (extracted === 0)     return `${cat.label} missing $${cat.amount.toFixed(2)} (PDF $${cat.amount.toFixed(2)} vs Extracted $0.00)`;
+          if (diff > 0)            return `${cat.label} short by $${diff.toFixed(2)} (PDF $${cat.amount.toFixed(2)} vs Extracted $${extracted.toFixed(2)})`;
+          return                          `${cat.label} over by $${Math.abs(diff).toFixed(2)} (PDF $${cat.amount.toFixed(2)} vs Extracted $${extracted.toFixed(2)})`;
+        });
+      return parts.length > 0 ? '. Category breakdown: ' + parts.join(', ') : '';
+    };
+    const debitCatBreakdown = buildCatBreakdown();
 
     // 1. Total Credits
     const creditDiff = pdf.totalCredits != null ? +Math.abs(pdf.totalCredits - excelCredits).toFixed(2) : null;
