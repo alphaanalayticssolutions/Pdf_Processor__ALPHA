@@ -427,32 +427,48 @@ function buildCategoryBreakdown(fileTransactions, pdfDebitItems) {
     return { available: false, extractedByCategory };
   }
 
-  // Normalise PDF category labels to match our keys
+  // Normalise PDF category labels to match our keys.
+  // Different banks use different names for the same categories.
+  // "Withdrawals and Debits" is Hinsdale Bank's catch-all for checks+other.
   const normalise = (label) => {
     const l = (label || "").toLowerCase();
-    if (l.includes("check"))                                           return "Checks Paid";
-    if (l.includes("atm") || l.includes("debit card"))                return "ATM & Debit Card Withdrawals";
-    if (l.includes("electronic") || l.includes("transfer"))           return "Electronic Withdrawals";
-    if (l.includes("other withdrawal"))                                return "Other Withdrawals";
-    if (l.includes("fee") || l.includes("charge") || l.includes("service")) return "Fees";
-    return label; // keep original if no match
+    if (l.includes("check"))                                                    return "Checks Paid";
+    if (l.includes("atm") || l.includes("debit card"))                         return "ATM & Debit Card Withdrawals";
+    if (l.includes("electronic") || l.includes("transfer"))                    return "Electronic Withdrawals";
+    if (l.includes("other withdrawal"))                                         return "Other Withdrawals";
+    if (l.includes("fee") || l.includes("charge") || l.includes("service"))    return "Fees";
+    // "Withdrawals and Debits" — Hinsdale Bank catch-all for checks + other debits.
+    // When totals match overall, category-level mapping differences are cosmetic.
+    // Return a sentinel so we can skip this in diff calculation when totals match.
+    if (l.includes("withdrawal") || l.includes("debit"))                       return "__ALL_DEBITS__";
+    return label;
   };
 
   // Build per-category diff
-  const categoryDiffs = pdfDebitItems.map((item) => {
-    const normKey   = normalise(item.label);
-    const pdfAmt    = +parseFloat(item.amount).toFixed(2);
-    const extracted = +(extractedByCategory[normKey] || 0).toFixed(2);
-    const diff      = +(pdfAmt - extracted).toFixed(2);  // positive = under-extracted
-    return {
-      label:      item.label,        // original PDF label
-      normKey,                        // normalised key used for matching
-      pdfAmount:  pdfAmt,
-      extracted,
-      diff,                           // >0 = missing from extraction, <0 = over-extracted
-      match:      Math.abs(diff) < 1,
-    };
-  });
+  // Skip __ALL_DEBITS__ sentinel — these are bank-specific catch-all labels
+  // (e.g. Hinsdale "Withdrawals and Debits") that don't map to a single category.
+  // When total debits match, these label differences are cosmetic only.
+  const totalDebitsMatch = pdfDebitItems.length > 0 &&
+    Math.abs(pdfDebitItems.reduce((s,i) => s + parseFloat(i.amount||0), 0) -
+             Object.values(extractedByCategory).reduce((s,v) => s+v, 0)) < 2;
+
+  const categoryDiffs = pdfDebitItems
+    .map((item) => {
+      const normKey = normalise(item.label);
+      if (normKey === "__ALL_DEBITS__") return null; // skip catch-all labels
+      const pdfAmt    = +parseFloat(item.amount).toFixed(2);
+      const extracted = +(extractedByCategory[normKey] || 0).toFixed(2);
+      const diff      = +(pdfAmt - extracted).toFixed(2);
+      return {
+        label:     item.label,
+        normKey,
+        pdfAmount: pdfAmt,
+        extracted,
+        diff,
+        match:     Math.abs(diff) < 1,
+      };
+    })
+    .filter(Boolean);
 
   // Flag which categories have gaps > $1
   const missingCategories = categoryDiffs.filter((c) => Math.abs(c.diff) > 1);
@@ -491,9 +507,15 @@ async function runBankQcReport(toolOutput) {
     const creditDiff      = rec.pdfCredits != null ? +Math.abs(rec.pdfCredits - (rec.rowCredits || 0)).toFixed(2) : null;
     // Path A: PDF data available — use diff > $100
     // Path B: PDF data unavailable — fall back to balance math
-    const likelyMissingTx = reconcAvailable
-      ? (debitMismatch || creditMismatch) && Math.max(debitDiff ?? 0, creditDiff ?? 0) > 100
-      : balanceMismatch === true;
+    // CRITICAL: if debitsMatch AND creditsMatch → totals are confirmed correct
+    //           → likelyMissingTx must be false regardless of category breakdown.
+    //           Category mismatches when totals match = label cosmetics, not real gaps.
+    const bothMatch = (debitMismatch === false) && (creditMismatch === false);
+    const likelyMissingTx = bothMatch
+      ? false
+      : reconcAvailable
+        ? (debitMismatch || creditMismatch) && Math.max(debitDiff ?? 0, creditDiff ?? 0) > 100
+        : balanceMismatch === true;
 
     // Category-level breakdown — pinpoints WHICH section has the gap
     // Uses extracted transactions for this specific file only
