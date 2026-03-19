@@ -60,9 +60,7 @@ DETECT DOCUMENT TYPE FIRST:
 
 ACCOUNT INFO:
 - Extract bank name, account holder name, account number last 4-5 digits, statement period, opening balance, closing balance.
-- Also extract total_debits and total_credits from the statement summary section if present (e.g. "Total Checks Paid", "Total Deposits and Additions", "Total Withdrawals", etc.)
-- total_debits = sum of ALL debit categories from the summary (checks + ATM + fees + electronic withdrawals etc.)
-- total_credits = sum of ALL credit/deposit categories from the summary
+- Do NOT try to read or extract summary totals — the totals will be computed by summing the individual transactions you extract.
 
 EXTRACT TRANSACTIONS from ALL pages including: Deposits/Credits, Checks Paid, Electronic Withdrawals, ATM Withdrawals, Fees, Refunds, Card Purchases.
 
@@ -85,10 +83,10 @@ De-duplication rules:
 5. SELF-CHECK BEFORE RETURNING: Scan your output for (a) duplicate check numbers, (b) duplicate Transaction# IDs, (c) identical date+amount+description pairs. Remove any duplicates found.
 
 OUTPUT — return ONLY this minified JSON:
-{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"total_debits":0,"total_credits":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022"}]}
+{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[{"date":"Jan 01 2022","description":"","check_number":"","debit":0,"credit":0,"balance":0,"running_balance":0,"month":"January 2022","type":"Credit","year":"2022"}]}
 
 For statements with no transactions, return:
-{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"total_debits":0,"total_credits":0,"transactions":[]}
+{"bank_name":"","account_number":"","account_holder":"","statement_period":"","opening_balance":0,"closing_balance":0,"transactions":[]}
 
 STRICT RULES:
 - Minified JSON only — no indentation, no extra whitespace
@@ -100,7 +98,7 @@ STRICT RULES:
 - Do NOT include balance summary rows as transactions
 - NEVER duplicate any transaction (see de-duplication rules above)
 - Unreadable values: 0 for numbers, "" for strings
-- total_debits and total_credits come from the PDF summary section — NOT recomputed from rows
+- Do NOT extract summary totals — totals are computed from the extracted transactions
 - Return ONLY the JSON, nothing else`;
 
 // ── AI RECONCILIATION ────────────────────────────────────────
@@ -413,15 +411,12 @@ export async function POST(request) {
         const rowCredits = (data.transactions || [])
           .reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
 
-        // Use Claude's extracted summary totals as primary source (correct for
-        // Chase-format statements). Fall back to row sums if summary missing.
-        const totalDebits  = parseFloat(data.total_debits)  > 0
-          ? parseFloat(data.total_debits)
-          : rowDebits;
-
-        const totalCredits = parseFloat(data.total_credits) > 0
-          ? parseFloat(data.total_credits)
-          : rowCredits;
+        // totalDebits and totalCredits = sum of all extracted transaction rows.
+        // The reconciliation function (runAIReconciliation) separately reads the
+        // PDF summary section to compare — that is where the $1 OCR fix lives.
+        // Extraction job is only to get every transaction right — not read summary.
+        const totalDebits  = +rowDebits.toFixed(2);
+        const totalCredits = +rowCredits.toFixed(2);
 
         const statementObj = {
           fileName:       file.name,
