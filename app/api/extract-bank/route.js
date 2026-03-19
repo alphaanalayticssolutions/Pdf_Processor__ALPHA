@@ -60,7 +60,7 @@ Some PDF lines have redacted account numbers shown as dark boxes, blacked-out se
 - Extract using whatever IS visible: date, amount, Transaction#, any readable description text.
 - For description, use visible text and replace redacted part with "..." (e.g. "Online Transfer To Chk ... Transaction#: 7649952501").
 - The Transaction# is usually fully readable even when account number is obscured — always include it.
-- If the AMOUNT is also redacted/unreadable, still include the transaction row with debit: 0 and note in description "amount redacted".
+- If the AMOUNT is also redacted/unreadable, still include the transaction row with debit: 0 and note in description "amount redacted". NEVER guess or infer the amount from nearby values — use exactly 0.
 - A transaction with partial description or zero amount is VALID and must be included.
 
 RUNNING BALANCE: Use the statement's own printed running balance column if available. If not available, calculate cumulative balance after each transaction.
