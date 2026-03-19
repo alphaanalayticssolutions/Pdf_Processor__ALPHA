@@ -70,6 +70,14 @@ LAYOUT: Handle any column order. Merge multi-line transactions into one row. Inf
 - Amounts in parentheses (123.45) = Debit
 - Negative amounts -123.45 = Debit
 
+PARTIALLY OBSCURED OR REDACTED LINES — CRITICAL:
+Some PDF lines contain redacted account numbers shown as dark boxes, blacked-out segments, or asterisks (e.g. "Online Transfer To Chk ████ Transaction#: 1234567890" or "Transfer To Chk ...2001").
+- NEVER skip a transaction because its account number or part of its description is redacted or unreadable.
+- Extract using whatever IS visible: the date, amount, Transaction#, and any readable description text.
+- For the description field, use the visible text and replace the redacted portion with "..." (e.g. "Online Transfer To Chk ... Transaction#: 7649952501").
+- The Transaction# is usually fully readable even when the account number is obscured — always include it.
+- A transaction with a partial description is VALID and must be included.
+
 RUNNING BALANCE: Use the statement's own printed running balance column if available. If not available, calculate cumulative balance after each transaction.
 
 CRITICAL — NO DUPLICATE TRANSACTIONS:
@@ -102,9 +110,6 @@ STRICT RULES:
 - Return ONLY the JSON, nothing else`;
 
 // ── AI RECONCILIATION ────────────────────────────────────────
-// Dedicated focused Claude Haiku call — just finds the two summary
-// numbers from the PDF regardless of layout, bank, or section name.
-// Runs in parallel with Excel building — adds ~1s, no serial cost.
 async function runAIReconciliation(base64PDF, fileName, rowDebits, rowCredits) {
   try {
     const response = await client.messages.create({
@@ -147,7 +152,6 @@ Rules:
     const raw  = response.content[0].text.trim().replace(/```json|```/g, '').trim();
     const data = JSON.parse(raw);
 
-    // Sum the individual line items — more accurate than reading the pre-printed total
     const debitItems  = data.debitItems  || [];
     const creditItems = data.creditItems || [];
 
@@ -190,19 +194,6 @@ Rules:
 }
 
 // ── QC DATA BUILDER ──────────────────────────────────────────
-// Builds qcData from already-extracted data — zero extra API calls.
-//
-// FIX 1 — totalDebits/totalCredits use Claude's extracted summary values
-//   NOT re-summed from transaction rows. Chase statements group transactions
-//   by type so re-summing rows gives wrong totals.
-//
-// FIX 2 — Running balance recomputation sorts transactions by date first.
-//   Chase statements come deposits-first then checks — without sorting,
-//   sequential recomputation generates false positive errors on clean data.
-//
-// FIX 3 — Running balance errors only shown when statement balance math
-//   also fails. If opening + credits - debits = closing ✅, running balance
-//   mismatches are sort-order artifacts — suppress them entirely.
 function buildBankQcData(allStatements, allTransactions) {
 
   // Date gaps — flag gaps > 5 days within a statement
@@ -227,9 +218,14 @@ function buildBankQcData(allStatements, allTransactions) {
     }
   });
 
-  // Amount outliers — flag amounts > 20x median (catches OCR extra zeros)
+  // Amount outliers — DEBIT transactions only.
+  // Large credits (deposits) are expected on business accounts and must NOT be
+  // flagged as OCR errors. The outlier check is specifically for debit amounts
+  // where an extra zero (e.g. $370 → $3,700) would be an extraction error.
   const amountOutliers = [];
   allStatements.forEach((stmt) => {
+    // Build median from ALL transactions (both debit and credit) for context,
+    // but only flag DEBIT transactions as outliers.
     const amounts = (stmt.transactions || [])
       .map((t) => Math.abs(t.debit || t.credit || 0))
       .filter((a) => a > 0)
@@ -239,7 +235,11 @@ function buildBankQcData(allStatements, allTransactions) {
     const median = amounts[Math.floor(amounts.length / 2)];
 
     (stmt.transactions || []).forEach((t) => {
-      const amt = Math.abs(t.debit || t.credit || 0);
+      // Only flag debits — credits are often legitimate large deposits
+      const isDebit = (t.debit || 0) > 0;
+      if (!isDebit) return;
+
+      const amt = t.debit || 0;
       if (amt > median * 20 && median > 0) {
         amountOutliers.push({
           file:   stmt.fileName,
@@ -251,8 +251,7 @@ function buildBankQcData(allStatements, allTransactions) {
     });
   });
 
-  // Running balance errors — sort by date first (FIX 2), suppress when
-  // overall balance math passes (FIX 3)
+  // Running balance errors — sort by date first, suppress when overall balance math passes
   const statementsWithBadMath = new Set(
     allStatements
       .filter((s) => {
@@ -266,7 +265,6 @@ function buildBankQcData(allStatements, allTransactions) {
 
   const runningBalanceErrors = [];
   allStatements.forEach((stmt) => {
-    // Only check running balance if overall math is wrong
     if (!statementsWithBadMath.has(stmt.fileName)) return;
 
     const rawTxs = stmt.transactions || [];
@@ -336,15 +334,14 @@ export async function POST(request) {
       );
     }
 
-    // ── Parallel extraction + reconciliation ────────────────
+    // ── Parallel extraction ──────────────────────────────────
     const results = await Promise.all(pdfFiles.map(async (file) => {
       try {
         console.log('Processing:', file.name, '| Size:', file.size);
         const arrayBuffer = await file.arrayBuffer();
         const base64PDF   = Buffer.from(arrayBuffer).toString('base64');
 
-        // ── Run extraction and reconciliation in parallel ──
-        const [claudeResponse, /* reconciliation runs after we have row sums */] = await Promise.all([
+        const [claudeResponse] = await Promise.all([
           client.messages.stream({
             model:      'claude-sonnet-4-5',
             max_tokens: 32000,
@@ -359,7 +356,7 @@ export async function POST(request) {
               ],
             }],
           }).finalMessage(),
-          Promise.resolve(), // placeholder — reconciliation needs row sums first
+          Promise.resolve(),
         ]);
 
         let responseText = claudeResponse.content[0].text.trim();
@@ -405,16 +402,11 @@ export async function POST(request) {
 
         console.log('Success:', file.name, '| Transactions:', transactions.length);
 
-        // Row sums — computed OUTSIDE statementObj (cannot use const inside object literal)
         const rowDebits  = (data.transactions || [])
           .reduce((s, t) => s + (parseFloat(t.debit)  || 0), 0);
         const rowCredits = (data.transactions || [])
           .reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
 
-        // totalDebits and totalCredits = sum of all extracted transaction rows.
-        // The reconciliation function (runAIReconciliation) separately reads the
-        // PDF summary section to compare — that is where the $1 OCR fix lives.
-        // Extraction job is only to get every transaction right — not read summary.
         const totalDebits  = +rowDebits.toFixed(2);
         const totalCredits = +rowCredits.toFixed(2);
 
@@ -427,9 +419,6 @@ export async function POST(request) {
           transactions:   data.transactions    || [],
         };
 
-        // ── AI Reconciliation — now that we have row sums ──
-        // Uses Haiku (fast, cheap) — just finds two numbers in the PDF.
-        // Runs independently so extraction errors don't block it.
         const reconciliationResult = await runAIReconciliation(
           base64PDF, file.name, rowDebits, rowCredits
         );
@@ -488,7 +477,6 @@ export async function POST(request) {
     // ── Build Excel ──────────────────────────────────────────
     const wb = new ExcelJS.Workbook();
 
-    // Sheet 1: All Transactions
     const txSheet = wb.addWorksheet('All Transactions');
     txSheet.columns = [
       { header: 'File Name',        key: 'file_name',        width: 30 },
@@ -566,7 +554,6 @@ export async function POST(request) {
       noteRow.getCell('description').font = { italic: true, color: { argb: 'FF888888' } };
     }
 
-    // Sheet 2: Summary
     const sumSheet = wb.addWorksheet('Summary');
     sumSheet.columns = [
       { header: 'File Name',          key: 'file',              width: 30 },
@@ -603,7 +590,7 @@ export async function POST(request) {
       errors,
       excelFile:         excelBase64,
       fileName:          outputFileName,
-      reconciliation,    // ← AI-verified PDF totals vs extracted row sums
+      reconciliation,
       qcData:            buildBankQcData(allStatements, allTransactions),
     });
 
