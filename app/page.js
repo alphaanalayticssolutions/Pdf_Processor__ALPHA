@@ -14,7 +14,6 @@ const VALID_USERS = [
 ];
 const COMPANY_DOMAIN = '@alphaanalyticssol.com';
 
-// ── File size guard (prevents Vercel timeout before job even starts) ───────────
 function checkSizeLimit(toolName, files) {
   const limit = FILE_SIZE_LIMITS[toolName];
   if (!limit) return null;
@@ -27,9 +26,7 @@ function checkSizeLimit(toolName, files) {
   return null;
 }
 
-// ─────────────────────────────────────────────────────────────
-// SHARED STYLES
-// ─────────────────────────────────────────────────────────────
+// ── Shared Styles ────────────────────────────────────────────
 const S = {
   card: {
     background: 'white',
@@ -80,9 +77,7 @@ const S = {
   },
 };
 
-// ─────────────────────────────────────────────────────────────
-// UPLOAD DROP ZONE
-// ─────────────────────────────────────────────────────────────
+// ── Upload Drop Zone ─────────────────────────────────────────
 function UploadZone({ icon, title, subtitle, color = '#1a3c6e', accept, multiple, folder, onChange }) {
   const [hover, setHover] = useState(false);
   return (
@@ -110,9 +105,7 @@ function UploadZone({ icon, title, subtitle, color = '#1a3c6e', accept, multiple
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// FILE LIST
-// ─────────────────────────────────────────────────────────────
+// ── File List ────────────────────────────────────────────────
 function FileList({ files, selected, onToggle, iconFn }) {
   return (
     <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden', maxHeight: '260px', overflowY: 'auto' }}>
@@ -136,9 +129,7 @@ function FileList({ files, selected, onToggle, iconFn }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// FILE SELECTION PANEL
-// ─────────────────────────────────────────────────────────────
+// ── File Selection Panel ─────────────────────────────────────
 function FileSelectionPanel({ files, selected, onToggle, onToggleAll, onClear, label, iconFn }) {
   const selectedFiles = files.filter(f => selected[f.name]);
   const allChecked = files.length > 0 && files.every(f => selected[f.name]);
@@ -163,9 +154,7 @@ function FileSelectionPanel({ files, selected, onToggle, onToggleAll, onClear, l
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// TOOL HEADER
-// ─────────────────────────────────────────────────────────────
+// ── Tool Header ──────────────────────────────────────────────
 function ToolHeader({ step, icon, title, desc, badge }) {
   return (
     <>
@@ -179,9 +168,7 @@ function ToolHeader({ step, icon, title, desc, badge }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// STAT TILES
-// ─────────────────────────────────────────────────────────────
+// ── Stat Tiles ───────────────────────────────────────────────
 function StatTiles({ stats }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${stats.length}, 1fr)`, gap: '10px', marginBottom: '16px' }}>
@@ -195,9 +182,7 @@ function StatTiles({ stats }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// QUEUED BANNER — shows inside tool when job is in queue
-// ─────────────────────────────────────────────────────────────
+// ── Queued Banner ────────────────────────────────────────────
 function QueuedBanner({ toolName, onOpenDownloads }) {
   const queue = useDownloadsStore(s => s.queue);
   const job   = queue.find(j => j.toolName === toolName && (j.status === 'waiting' || j.status === 'processing'));
@@ -224,9 +209,7 @@ function QueuedBanner({ toolName, onOpenDownloads }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// LOGIN PAGE
-// ─────────────────────────────────────────────────────────────
+// ── Login Page ───────────────────────────────────────────────
 function LoginPage({ onLogin }) {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
@@ -283,9 +266,7 @@ function LoginPage({ onLogin }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// STEP NAV BAR
-// ─────────────────────────────────────────────────────────────
+// ── Step Nav Bar ─────────────────────────────────────────────
 function StepNavBar({ tools, onSelect }) {
   const activeTools = tools.filter(t => t.active);
   const row1 = activeTools.slice(0, 5);
@@ -321,16 +302,13 @@ function StepNavBar({ tools, onSelect }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// HOME / DASHBOARD
-// ─────────────────────────────────────────────────────────────
+// ── Home / Dashboard ─────────────────────────────────────────
 export default function Home() {
   const [activeTool, setActiveTool] = useState(null);
   const [loggedIn, setLoggedIn]     = useState(false);
   const [userEmail, setUserEmail]   = useState('');
   const store = useDownloadsStore();
 
-  // Init downloads store on login
   useEffect(() => {
     if (loggedIn) {
       store.init();
@@ -358,12 +336,9 @@ export default function Home() {
 
   return (
     <main style={{ minHeight: '100vh', background: '#f1f5f9', fontFamily: "'Segoe UI', system-ui, sans-serif" }}>
-
-      {/* ── HEADER ── */}
       <div style={{ background: 'linear-gradient(135deg, #0c1a30 0%, #0f2444 60%, #162d56 100%)', padding: '44px 20px 36px', textAlign: 'center', position: 'relative' }}>
         <div style={{ position: 'absolute', top: '16px', right: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ color: '#64748b', fontSize: '12px' }}>{userEmail}</span>
-          {/* ── Downloads Bell ── */}
           <DownloadsBell />
           <button onClick={handleLogout} style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: 'white', padding: '6px 16px', borderRadius: '20px', fontSize: '12px', cursor: 'pointer', fontWeight: '600' }}>
             Sign Out
@@ -408,16 +383,13 @@ export default function Home() {
         POWERED BY CLAUDE AI • ANTHROPIC
       </div>
 
-      {/* ── Downloads Dashboard + Toast — always mounted after login ── */}
       <DownloadsDashboard />
       <DownloadsToast />
     </main>
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// TOOL CARD
-// ─────────────────────────────────────────────────────────────
+// ── Tool Card ────────────────────────────────────────────────
 function ToolCard({ tool, onSelect }) {
   const [hover, setHover] = useState(false);
   return (
@@ -434,9 +406,7 @@ function ToolCard({ tool, onSelect }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// TRANSACTION ANALYSIS TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Transaction Analysis Tool ────────────────────────────────
 function TransactionAnalysisTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
@@ -514,9 +484,7 @@ function TransactionAnalysisTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// STATEMENT TRACKER TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Statement Tracker Tool ───────────────────────────────────
 function StatementTrackerTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
@@ -601,9 +569,7 @@ function StatementTrackerTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// DESCRIPTION CATEGORISER TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Description Categoriser Tool ─────────────────────────────
 function DescriptionCategoriserTool({ onBack }) {
   const [allFiles, setAllFiles] = useState([]);
   const [selected, setSelected] = useState({});
@@ -630,8 +596,6 @@ function DescriptionCategoriserTool({ onBack }) {
   const handleCategorise = async () => {
     if (selectedFiles.length === 0) { setError('Please select at least one Excel file.'); return; }
     setError(''); setResults([]); setDone(false);
-
-    // Read Excel in browser first (this is client-side, not a job)
     try {
       setProgress('Loading Excel parser…');
       if (!window.XLSX) {
@@ -677,7 +641,6 @@ function DescriptionCategoriserTool({ onBack }) {
         onSuccess: (result) => { setResults(result.extra.results); setDone(true); },
         onError:   (err)    => setError(err.message),
       });
-
     } catch (err) { setError(err.message); setProgress(''); }
   };
 
@@ -737,9 +700,7 @@ function DescriptionCategoriserTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// DUPLICATE REPORT TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Duplicate Report Tool ────────────────────────────────────
 function DuplicateTool({ onBack }) {
   const [files, setFiles]   = useState([]);
   const [result, setResult] = useState(null);
@@ -759,8 +720,6 @@ function DuplicateTool({ onBack }) {
   const handleSubmit = async () => {
     if (files.length === 0) { setError('Please select a folder with files!'); return; }
     setError('');
-
-    // Hash files client-side first (no size limit — just hashing)
     const fileData = [], hashMap = {};
     for (const file of files) {
       const hash = await hashFile(file);
@@ -818,9 +777,7 @@ function DuplicateTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// PDF SPLITTER TOOL
-// ─────────────────────────────────────────────────────────────
+// ── PDF Splitter Tool ────────────────────────────────────────
 function SplitterTool({ onBack }) {
   const [file, setFile]             = useState(null);
   const [docType, setDocType]       = useState('auto');
@@ -837,7 +794,6 @@ function SplitterTool({ onBack }) {
     if (!file) { alert('Please select a PDF!'); return; }
     setResult(null); setProgress('');
     const fileSnap = file;
-
     store.addJob({
       toolName:    'splitter',
       displayName: `PDF Splitter — ${fileSnap.name}`,
@@ -849,8 +805,7 @@ function SplitterTool({ onBack }) {
         const data = await res.json();
         if (!data.success) throw new Error(data.error || 'Split failed');
         const blob = base64ToBlob(data.zipFile, 'application/zip');
-        const summary = `${data.splitCount} documents${data.aiExplanation ? ': ' + data.aiExplanation.slice(0, 60) : ''}`;
-        return { blob, fileName: 'split_documents.zip', aiSummary: summary, category: 'PDF Splitter', extra: data };
+        return { blob, fileName: 'split_documents.zip', aiSummary: `${data.splitCount} documents${data.aiExplanation ? ': ' + data.aiExplanation.slice(0, 60) : ''}`, category: 'PDF Splitter', extra: data };
       },
       onSuccess: (result) => setResult(result.extra),
       onError:   (err)    => setProgress('Error: ' + err.message),
@@ -914,9 +869,7 @@ function SplitterTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// CATEGORISATION TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Categorisation Tool ──────────────────────────────────────
 const ALL_CATEGORIES = [
   { folder: '01_Bank_Statements', icon: '🏦' },      { folder: '02_Financial_Records', icon: '📊' },
   { folder: '03_Tax_Documents', icon: '🧾' },         { folder: '04_Invoices_And_Receipts', icon: '🧾' },
@@ -1024,9 +977,7 @@ function CategoriseTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// BATES STAMPING TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Bates Stamping Tool ──────────────────────────────────────
 function StampingTool({ onBack }) {
   const [allFiles, setAllFiles]         = useState([]);
   const [selected, setSelected]         = useState({});
@@ -1170,9 +1121,7 @@ function StampingTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// EXTRACTION TOOL (router)
-// ─────────────────────────────────────────────────────────────
+// ── Extraction Tool (router) ─────────────────────────────────
 function ExtractionTool({ onBack }) {
   const [activeType, setActiveType] = useState(null);
   if (activeType === 'invoice') return <InvoiceExtractTool onBack={() => setActiveType(null)} />;
@@ -1181,7 +1130,7 @@ function ExtractionTool({ onBack }) {
 
   const options = [
     { type: 'invoice', icon: '🧾', title: 'Structured Invoices', desc: 'Upload invoice folder → Specify fields → Extract data → Excel output', active: true },
-    { type: 'bank',    icon: '🏦', title: 'Bank Statements',     desc: 'Upload folder → Select specific PDFs → Transactions extracted → Excel output', active: true },
+    { type: 'bank',    icon: '🏦', title: 'Bank Statements',     desc: 'Upload folder, individual PDFs, or a ZIP → Transactions extracted → Excel output', active: true },
     { type: 'tax',     icon: '📑', title: 'Tax Statements',      desc: 'Coming soon', active: false },
   ];
 
@@ -1213,13 +1162,11 @@ function ExtractionOptionCard({ opt, onSelect }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// INVOICE EXTRACTION TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Invoice Extraction Tool ──────────────────────────────────
 function InvoiceExtractTool({ onBack }) {
-  const [files, setFiles]     = useState([]);
-  const [fields, setFields]   = useState('Invoice Date, Invoice Number, Customer Name, Vendor Name, Amount, Tax, Total Amount, Due Date');
-  const [result, setResult]   = useState(null);
+  const [files, setFiles]       = useState([]);
+  const [fields, setFields]     = useState('Invoice Date, Invoice Number, Customer Name, Vendor Name, Amount, Tax, Total Amount, Due Date');
+  const [result, setResult]     = useState(null);
   const [progress, setProgress] = useState('');
   const store = useDownloadsStore();
   const queue = store.queue.filter(j => j.toolName === 'extraction-invoice' && (j.status === 'waiting' || j.status === 'processing'));
@@ -1291,29 +1238,100 @@ function InvoiceExtractTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// BANK STATEMENT EXTRACTION TOOL
-// ─────────────────────────────────────────────────────────────
+// ── Bank Statement Extraction Tool ───────────────────────────
+// Supports three input methods: Folder, individual PDFs, and ZIP archive.
+// All three converge into the same `allFiles` state via `loadFiles()`.
+// The ZIP path runs client-side extraction (JSZip) then calls loadFiles with
+// the resulting File objects — identical to how the folder/PDF paths work.
 function BankExtractTool({ onBack }) {
-  const [allFiles, setAllFiles] = useState([]);
-  const [selected, setSelected] = useState({});
-  const [result, setResult]     = useState(null);
-  const [error, setError]       = useState('');
+  const [allFiles, setAllFiles]   = useState([]);
+  const [selected, setSelected]   = useState({});
+  const [result, setResult]       = useState(null);
+  const [error, setError]         = useState('');
+  const [zipStatus, setZipStatus] = useState(''); // feedback while extracting ZIP
   const store = useDownloadsStore();
   const queue = store.queue.filter(j => j.toolName === 'extraction-bank' && (j.status === 'waiting' || j.status === 'processing'));
   const isQueued = queue.length > 0;
 
+  // ── Shared file loader — deduplicates by name ──────────────
   const loadFiles = (fileList) => {
-    const pdfs = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    setAllFiles(prev => { const m = new Map(prev.map(f => [f.name, f])); pdfs.forEach(f => m.set(f.name, f)); return Array.from(m.values()); });
-    setSelected(prev => { const u = { ...prev }; pdfs.forEach(f => { if (!(f.name in u)) u[f.name] = true; }); return u; });
-    setResult(null); setError('');
+    const pdfs = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.pdf') && f.size > 0);
+    setAllFiles(prev => {
+      const m = new Map(prev.map(f => [f.name, f]));
+      pdfs.forEach(f => m.set(f.name, f));
+      return Array.from(m.values());
+    });
+    setSelected(prev => {
+      const u = { ...prev };
+      pdfs.forEach(f => { if (!(f.name in u)) u[f.name] = true; });
+      return u;
+    });
+    setResult(null);
+    setError('');
+  };
+
+  // ── ZIP handler — extracts client-side then calls loadFiles ─
+  const handleZipUpload = async (e) => {
+    const zipFile = e.target.files?.[0];
+    if (!zipFile) return;
+    setError('');
+    setZipStatus(`📦 Reading ${zipFile.name}…`);
+
+    try {
+      // Lazy-load JSZip from CDN (same pattern as SheetJS in DescriptionCategoriserTool)
+      if (!window.JSZip) {
+        await new Promise((resolve, reject) => {
+          const s   = document.createElement('script');
+          s.src     = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+          s.onload  = resolve;
+          s.onerror = () => reject(new Error('Failed to load ZIP parser. Check your connection.'));
+          document.head.appendChild(s);
+        });
+      }
+
+      const zip   = await window.JSZip.loadAsync(zipFile);
+      const found = [];
+
+      for (const [relativePath, entry] of Object.entries(zip.files)) {
+        // ── ZIP-slip prevention ──────────────────────────
+        if (relativePath.includes('..') || relativePath.startsWith('/')) {
+          console.warn('Blocked unsafe ZIP path:', relativePath);
+          continue;
+        }
+        if (entry.dir) continue;
+
+        // Only PDF files; skip hidden files (macOS __MACOSX, .DS_Store, etc.)
+        const fileName = relativePath.split('/').pop();
+        if (!fileName || !fileName.toLowerCase().endsWith('.pdf')) continue;
+        if (fileName.startsWith('.') || relativePath.includes('__MACOSX')) continue;
+
+        setZipStatus(`📦 Extracting ${fileName}…`);
+        const blob = await entry.async('blob');
+        found.push(new File([blob], fileName, { type: 'application/pdf' }));
+      }
+
+      if (found.length === 0) {
+        setError(`No PDF files found inside "${zipFile.name}". Make sure the ZIP contains .pdf files.`);
+        setZipStatus('');
+        return;
+      }
+
+      setZipStatus(`✅ Extracted ${found.length} PDF${found.length !== 1 ? 's' : ''} from ZIP`);
+      loadFiles(found); // ← reuses exact same dedup + selection logic
+      setTimeout(() => setZipStatus(''), 3000); // clear after 3s
+    } catch (err) {
+      setError(`ZIP extraction failed: ${err.message}`);
+      setZipStatus('');
+    }
+
+    // Reset the input so the same ZIP can be re-uploaded if needed
+    e.target.value = '';
   };
 
   const selectedFiles = allFiles.filter(f => selected[f.name]);
   const allChecked    = allFiles.length > 0 && allFiles.every(f => selected[f.name]);
   const toggleAll  = () => { const a = {}; allFiles.forEach(f => a[f.name] = !allChecked); setSelected(a); };
-  const clearAll   = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); };
+  const clearAll   = () => { setAllFiles([]); setSelected({}); setResult(null); setError(''); setZipStatus(''); };
 
   const handleExtract = () => {
     if (selectedFiles.length === 0) { setError('Please select at least one PDF.'); return; }
@@ -1332,7 +1350,13 @@ function BankExtractTool({ onBack }) {
         const data = await res.json();
         if (!res.ok || data.error) throw new Error(data.error || 'Extraction failed.');
         const blob = base64ToBlob(data.excelFile, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        return { blob, fileName: data.fileName || 'bank_extraction.xlsx', aiSummary: `${data.totalTransactions} transactions from ${data.totalFiles} statement${data.totalFiles !== 1 ? 's' : ''}`, category: 'Bank Extraction', extra: data };
+        return {
+          blob,
+          fileName:  data.fileName || 'bank_extraction.xlsx',
+          aiSummary: `${data.totalTransactions} transactions from ${data.totalFiles} statement${data.totalFiles !== 1 ? 's' : ''}`,
+          category:  'Bank Extraction',
+          extra:     data,
+        };
       },
       onSuccess: (result) => setResult(result.extra),
       onError:   (err)    => setError(err.message),
@@ -1351,30 +1375,83 @@ function BankExtractTool({ onBack }) {
   return (
     <div style={S.card}>
       <button onClick={onBack} style={S.backBtn}>← Back to Extraction</button>
-      <ToolHeader step="5B" icon="🏦" title="Bank Statement Extraction" desc="Upload folder or pick individual PDFs → check/uncheck → Extract → Excel" badge />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
-        <UploadZone icon="📁" title="Upload Folder" subtitle="All PDF files inside" folder multiple onChange={e => loadFiles(e.target.files)} />
-        <UploadZone icon="📄" title="Upload PDFs" subtitle="Pick specific .pdf files" color="#15803d" accept=".pdf" multiple onChange={e => loadFiles(e.target.files)} />
+      <ToolHeader step="5B" icon="🏦" title="Bank Statement Extraction"
+        desc="Upload a folder, pick individual PDFs, or drop a ZIP archive → select statements → Extract → Excel" badge />
+
+      {/* ── Three upload zones ──────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+        <UploadZone
+          icon="📁"
+          title="Upload Folder"
+          subtitle="All PDFs inside"
+          folder multiple
+          onChange={e => loadFiles(e.target.files)}
+        />
+        <UploadZone
+          icon="📄"
+          title="Upload PDFs"
+          subtitle="Pick specific .pdf files"
+          color="#15803d"
+          accept=".pdf"
+          multiple
+          onChange={e => loadFiles(e.target.files)}
+        />
+        {/* ZIP zone — same visual weight, distinct purple colour */}
+        <UploadZone
+          icon="🗜️"
+          title="Upload ZIP"
+          subtitle="PDFs extracted automatically"
+          color="#7c3aed"
+          accept=".zip"
+          onChange={handleZipUpload}
+        />
       </div>
-      <FileSelectionPanel files={allFiles} selected={selected} onToggle={n => setSelected(p => ({ ...p, [n]: !p[n] }))} onToggleAll={toggleAll} onClear={clearAll} label="PDF Files" iconFn={() => '📄'} />
+
+      {/* ZIP extraction feedback banner */}
+      {zipStatus && (
+        <div style={{ background: zipStatus.startsWith('✅') ? '#f0fff4' : '#eff6ff', border: `1px solid ${zipStatus.startsWith('✅') ? '#86efac' : '#bfdbfe'}`, borderRadius: '8px', padding: '10px 14px', marginBottom: '12px', fontSize: '13px', color: zipStatus.startsWith('✅') ? '#166534' : '#1e40af', fontWeight: '600' }}>
+          {zipStatus}
+        </div>
+      )}
+
+      <FileSelectionPanel
+        files={allFiles}
+        selected={selected}
+        onToggle={n => setSelected(p => ({ ...p, [n]: !p[n] }))}
+        onToggleAll={toggleAll}
+        onClear={clearAll}
+        label="PDF Files"
+        iconFn={() => '📄'}
+      />
+
       {error && <div style={S.errorBox}>❌ {error}</div>}
       <QueuedBanner toolName="extraction-bank" onOpenDownloads={store.openDashboard} />
-      <button onClick={handleExtract} disabled={isQueued || selectedFiles.length === 0} style={{ ...S.primaryBtn(isQueued || selectedFiles.length === 0), marginBottom: '20px' }}>
-        {isQueued ? (queue[0]?.status === 'processing' ? '⏳ Extracting transactions…' : '🕐 Queued') : `🏦 Extract ${selectedFiles.length > 0 ? selectedFiles.length + ' ' : ''}Bank Statement${selectedFiles.length !== 1 ? 's' : ''}`}
+
+      <button
+        onClick={handleExtract}
+        disabled={isQueued || selectedFiles.length === 0}
+        style={{ ...S.primaryBtn(isQueued || selectedFiles.length === 0), marginBottom: '20px' }}
+      >
+        {isQueued
+          ? (queue[0]?.status === 'processing' ? '⏳ Extracting transactions…' : '🕐 Queued')
+          : `🏦 Extract ${selectedFiles.length > 0 ? selectedFiles.length + ' ' : ''}Bank Statement${selectedFiles.length !== 1 ? 's' : ''}`}
       </button>
+
       {result && (
         <div style={S.successBox}>
           <p style={{ color: '#166534', fontWeight: '700', fontSize: '15px', margin: '0 0 16px' }}>✅ Extraction Complete!</p>
           <StatTiles stats={[
-            { value: result.totalFiles, label: 'Files Processed', color: '#1a3c6e' },
-            { value: result.totalTransactions, label: 'Transactions', color: '#15803d', bg: '#f0fff4', border: '#bbf7d0' },
+            { value: result.totalFiles,        label: 'Files Processed', color: '#1a3c6e' },
+            { value: result.totalTransactions, label: 'Transactions',    color: '#15803d', bg: '#f0fff4', border: '#bbf7d0' },
           ]} />
+
           {result.summaries?.map((s, i) => (
             <div key={i} style={{ background: 'white', borderRadius: '8px', padding: '12px 14px', marginBottom: '8px', fontSize: '13px', border: '1px solid #e5e7eb' }}>
               <p style={{ fontWeight: '700', color: '#1a3c6e', margin: '0 0 3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📄 {s.file}</p>
               <p style={{ color: '#6b7280', margin: '0', fontSize: '12px' }}>{s.bank} • {s.account_holder} • {s.account_number} • {s.period} • {s.transaction_count} transactions</p>
             </div>
           ))}
+
           {result.reconciliation?.length > 0 && (
             <div style={{ marginBottom: '16px', marginTop: '4px' }}>
               <div style={{ fontWeight: '700', fontSize: '13px', color: '#1a3c6e', marginBottom: '10px' }}>🔍 AI Extraction Verification</div>
@@ -1413,17 +1490,27 @@ function BankExtractTool({ onBack }) {
               })}
             </div>
           )}
+
           <button onClick={handleDownload} style={S.successBtn}>📥 Download Excel File</button>
-          <QCBadge toolName="extraction-bank" toolOutput={result.qcData || { statements: (result.summaries || []).map(s => ({ file: s.file, openingBalance: s.opening_balance || null, closingBalance: s.closing_balance || null, totalDebits: s.total_debits || null, totalCredits: s.total_credits || null, transactionCount: s.transaction_count || 0, periodStart: null, periodEnd: null })), transactions: [], dateGaps: [], amountOutliers: [] }} metadata={{ pageCount: result.pageCount }} />
+          <QCBadge
+            toolName="extraction-bank"
+            toolOutput={result.qcData || {
+              statements: (result.summaries || []).map(s => ({
+                file: s.file, openingBalance: s.opening_balance || null, closingBalance: s.closing_balance || null,
+                totalDebits: s.total_debits || null, totalCredits: s.total_credits || null,
+                transactionCount: s.transaction_count || 0, periodStart: null, periodEnd: null,
+              })),
+              transactions: [], dateGaps: [], amountOutliers: [],
+            }}
+            metadata={{ pageCount: result.pageCount }}
+          />
         </div>
       )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// TAX STATEMENT — placeholder
-// ─────────────────────────────────────────────────────────────
+// ── Tax Statement — placeholder ──────────────────────────────
 function TaxExtractTool({ onBack }) {
   return (
     <div style={S.card}>
@@ -1438,9 +1525,7 @@ function TaxExtractTool({ onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// QC BANK EXTRACTION TOOL — no change needed (no file download)
-// ─────────────────────────────────────────────────────────────
+// ── QC Bank Extraction Tool ──────────────────────────────────
 function QCBankExtractionTool({ onBack }) {
   const [excelFiles, setExcelFiles]     = useState([]);
   const [pdfFiles, setPdfFiles]         = useState([]);

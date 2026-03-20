@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 
 import Anthropic from '@anthropic-ai/sdk';
 import ExcelJS from 'exceljs';
+import AdmZip from 'adm-zip';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -148,8 +149,8 @@ Rules:
       file:         fileName,
       pdfDebits,
       pdfCredits,
-      debitItems,   // full array — used for category-level gap detection in QC
-      creditItems,  // full array
+      debitItems,
+      creditItems,
       debitLabel:   debitItems.map(i  => i.label).join(' + ') || 'Total Debits',
       creditLabel:  creditItems.map(i => i.label).join(' + ') || 'Total Credits',
       rowDebits:    +rowDebits.toFixed(2),
@@ -172,7 +173,6 @@ Rules:
 // ── QC Data Builder ──────────────────────────────────────────
 function buildBankQcData(allStatements, allTransactions, reconciliation) {
 
-  // Date gaps > 5 days
   const dateGaps = [];
   allStatements.forEach((stmt) => {
     const txs = (stmt.transactions || []).filter(t => t.date).sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -182,19 +182,14 @@ function buildBankQcData(allStatements, allTransactions, reconciliation) {
     }
   });
 
-  // Amount outliers — DEBIT transactions only, exclude checks
   const amountOutliers = [];
   allStatements.forEach((stmt) => {
     const amounts = (stmt.transactions || []).map((t) => Math.abs(t.debit || t.credit || 0)).filter((a) => a > 0).sort((a, b) => a - b);
     if (amounts.length < 5) return;
     const median = amounts[Math.floor(amounts.length / 2)];
     (stmt.transactions || []).forEach((t) => {
-      if (!((t.debit || 0) > 0)) return;                              // debits only
-      if (t.check_number && String(t.check_number).trim()) return;    // skip checks
-
-      // Skip known legitimate large electronic payments — these are real transactions,
-      // not OCR errors. AmEx ACH, IRS tax payments, wire transfers, Zelle, mortgage
-      // payments etc. can be any size and should never be flagged as outliers.
+      if (!((t.debit || 0) > 0)) return;
+      if (t.check_number && String(t.check_number).trim()) return;
       const desc = (t.description || "").toLowerCase();
       const isElectronicPayment =
         desc.includes("american express") || desc.includes("amex") ||
@@ -205,13 +200,11 @@ function buildBankQcData(allStatements, allTransactions, reconciliation) {
         desc.includes("tax") || desc.includes("online transfer") ||
         desc.includes("bill pay") || desc.includes("quickpay");
       if (isElectronicPayment) return;
-
       const amt = t.debit || 0;
       if (amt > median * 20 && median > 0) amountOutliers.push({ file: stmt.fileName, date: t.date, amount: amt, times: Math.round(amt / median) });
     });
   });
 
-  // Running balance errors — only when overall math fails, preserve statement order
   const statementsWithBadMath = new Set(
     allStatements.filter((s) => {
       if (s.openingBalance == null || s.closingBalance == null || s.totalDebits == null || s.totalCredits == null) return false;
@@ -224,13 +217,10 @@ function buildBankQcData(allStatements, allTransactions, reconciliation) {
     if (!statementsWithBadMath.has(stmt.fileName)) return;
     const rawTxs = stmt.transactions || [];
     if (!rawTxs.length || rawTxs[0].running_balance == null) return;
-
-    // Sort by date, preserve intra-day statement order via original index
     const txs = rawTxs.map((t, i) => ({ ...t, _idx: i })).filter(t => t.date).sort((a, b) => {
       const diff = new Date(a.date).getTime() - new Date(b.date).getTime();
       return diff !== 0 ? diff : a._idx - b._idx;
     });
-
     let running = stmt.openingBalance || 0;
     let errorCount = 0;
     txs.forEach((t, idx) => {
@@ -238,7 +228,6 @@ function buildBankQcData(allStatements, allTransactions, reconciliation) {
       const printed = t.running_balance;
       if (printed != null && Math.abs(running - printed) > 1) {
         errorCount++;
-        // Cap at 3 — the rest are cascade artifacts from the same root cause
         if (errorCount <= 3) runningBalanceErrors.push({ file: stmt.fileName, row: idx + 1, expected: running.toFixed(2), found: printed.toFixed(2) });
         running = printed;
       }
@@ -258,16 +247,115 @@ function buildBankQcData(allStatements, allTransactions, reconciliation) {
     })),
     transactions: allTransactions.map((t) => ({
       date: t.date, description: t.description,
-      check_number: t.check_number || "", // needed by buildCategoryBreakdown to identify checks
+      check_number: t.check_number || "",
       debit: t.debit, credit: t.credit,
       runningBalance: t.running_balance ?? null,
     })),
     dateGaps,
     amountOutliers,
     runningBalanceErrors,
-    // Reconciliation embedded here so QCBadge always has it via toolOutput
-    // without needing a separate metadata prop on the calling page
     reconciliation: reconciliation || [],
+  };
+}
+
+// ── ZIP extraction helper ────────────────────────────────────
+// Returns an array of pseudo-File objects compatible with the existing pipeline.
+// Each object has: { name, size, arrayBuffer() }
+async function extractPdfsFromZip(zipFile) {
+  const extracted = [];
+  try {
+    const buffer = Buffer.from(await zipFile.arrayBuffer());
+    const zip    = new AdmZip(buffer);
+
+    for (const entry of zip.getEntries()) {
+      // ── ZIP-slip prevention ──────────────────────────────
+      const normalized = entry.entryName.replace(/\\/g, '/');
+      if (normalized.includes('..') || normalized.startsWith('/')) {
+        console.log('ZIP slip attempt blocked:', entry.entryName);
+        continue;
+      }
+      if (entry.isDirectory) continue;
+
+      // Only process PDFs inside the ZIP; skip hidden files
+      const entryName = normalized.split('/').pop();
+      if (!entryName || !entryName.toLowerCase().endsWith('.pdf')) continue;
+      if (entryName.startsWith('.')) continue;
+
+      const content = entry.getData(); // Buffer
+      extracted.push({
+        name:        entryName,
+        size:        content.length,
+        // arrayBuffer() shape matches the Web File API used by the existing pipeline
+        arrayBuffer: async () => content.buffer.slice(
+          content.byteOffset,
+          content.byteOffset + content.byteLength
+        ),
+      });
+    }
+    console.log(`ZIP "${zipFile.name}": extracted ${extracted.length} PDF(s)`);
+  } catch (err) {
+    console.log('ZIP extraction failed for', zipFile.name, '|', err.message);
+    // Return whatever we managed to extract; don't crash the whole request
+  }
+  return extracted;
+}
+
+// ── Process a single PDF file (existing logic, extracted into reusable fn) ──
+async function processSinglePdf(file) {
+  console.log('Processing:', file.name, '| Size:', file.size);
+  const base64PDF = Buffer.from(await file.arrayBuffer()).toString('base64');
+
+  const [claudeResponse] = await Promise.all([
+    client.messages.stream({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64PDF } },
+        { type: 'text', text: PROMPT },
+      ]}],
+    }).finalMessage(),
+    Promise.resolve(),
+  ]);
+
+  let responseText = claudeResponse.content[0].text.trim();
+  responseText     = repairJSON(responseText);
+  const data       = JSON.parse(responseText);
+
+  if (data.error === 'NOT_A_BANK_STATEMENT') {
+    return { success: false, error: { file: file.name, error: `Not a bank statement — detected as: ${data.document_type}` } };
+  }
+
+  const transactions = (data.transactions || []).map(t => ({
+    file_name: file.name, bank_name: data.bank_name || '', account_holder: data.account_holder || '',
+    account_number: data.account_number || '', statement_period: data.statement_period || '',
+    date: t.date || '', description: t.description || '', check_number: t.check_number || '',
+    debit: t.debit || 0, credit: t.credit || 0, balance: t.balance ?? '',
+    running_balance: t.running_balance ?? '', month: t.month || '', type: t.type || '', year: t.year || '',
+  }));
+
+  const rowDebits  = (data.transactions || []).reduce((s, t) => s + (parseFloat(t.debit)  || 0), 0);
+  const rowCredits = (data.transactions || []).reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
+
+  const reconciliationResult = await runAIReconciliation(base64PDF, file.name, rowDebits, rowCredits);
+
+  console.log('Success:', file.name, '| Transactions:', transactions.length);
+
+  return {
+    success: true,
+    transactions,
+    summary: {
+      file: file.name, bank: data.bank_name || '', account_holder: data.account_holder || '',
+      account_number: data.account_number || '', period: data.statement_period || '',
+      opening_balance: data.opening_balance || 0, closing_balance: data.closing_balance || 0,
+      transaction_count: transactions.length,
+    },
+    statementObj: {
+      fileName: file.name, openingBalance: data.opening_balance || 0, closingBalance: data.closing_balance || 0,
+      totalDebits: +rowDebits.toFixed(2), totalCredits: +rowCredits.toFixed(2),
+      transactions: data.transactions || [],
+    },
+    reconciliationResult,
+    outputFileName: `${file.name.replace(/\.pdf$/i, '')}.xlsx`,
   };
 }
 
@@ -276,76 +364,43 @@ export async function POST(request) {
   try {
     const formData = await request.formData();
     const files    = formData.getAll('pdfs');
-    const pdfFiles = files.filter(f => f.name?.toLowerCase().endsWith('.pdf') && f.size > 0);
 
-    console.log('Total files received:', files.length, '| PDF files:', pdfFiles.length);
+    console.log('Total files received:', files.length);
 
-    if (pdfFiles.length === 0) {
-      return Response.json({ error: `No PDF files found! Received ${files.length} files total.` }, { status: 400 });
+    // ── Separate by type ────────────────────────────────────
+    const directPdfs = files.filter(f => f.name?.toLowerCase().endsWith('.pdf') && f.size > 0);
+    const zipFiles   = files.filter(f => f.name?.toLowerCase().endsWith('.zip') && f.size > 0);
+
+    // ── Extract PDFs from each ZIP, then merge ───────────────
+    const pdfsFromZips = [];
+    for (const zipFile of zipFiles) {
+      const extracted = await extractPdfsFromZip(zipFile);
+      pdfsFromZips.push(...extracted);
     }
 
-    const results = await Promise.all(pdfFiles.map(async (file) => {
-      try {
-        console.log('Processing:', file.name, '| Size:', file.size);
-        const base64PDF = Buffer.from(await file.arrayBuffer()).toString('base64');
+    const pdfFiles = [...directPdfs, ...pdfsFromZips];
 
-        const [claudeResponse] = await Promise.all([
-          client.messages.stream({
-            model: 'claude-sonnet-4-5',
-            max_tokens: 32000,
-            messages: [{ role: 'user', content: [
-              { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64PDF } },
-              { type: 'text', text: PROMPT },
-            ]}],
-          }).finalMessage(),
-          Promise.resolve(),
-        ]);
+    console.log(
+      `Direct PDFs: ${directPdfs.length} | ZIPs: ${zipFiles.length} | ` +
+      `PDFs from ZIPs: ${pdfsFromZips.length} | Total to process: ${pdfFiles.length}`
+    );
 
-        let responseText = claudeResponse.content[0].text.trim();
-        responseText     = repairJSON(responseText);
-        const data       = JSON.parse(responseText);
+    if (pdfFiles.length === 0) {
+      return Response.json({
+        error: `No PDF files found! Received ${files.length} file(s). ` +
+               `ZIPs must contain at least one .pdf file.`
+      }, { status: 400 });
+    }
 
-        if (data.error === 'NOT_A_BANK_STATEMENT') {
-          return { success: false, error: { file: file.name, error: `Not a bank statement — detected as: ${data.document_type}` } };
-        }
-
-        const transactions = (data.transactions || []).map(t => ({
-          file_name: file.name, bank_name: data.bank_name || '', account_holder: data.account_holder || '',
-          account_number: data.account_number || '', statement_period: data.statement_period || '',
-          date: t.date || '', description: t.description || '', check_number: t.check_number || '',
-          debit: t.debit || 0, credit: t.credit || 0, balance: t.balance ?? '',
-          running_balance: t.running_balance ?? '', month: t.month || '', type: t.type || '', year: t.year || '',
-        }));
-
-        const rowDebits  = (data.transactions || []).reduce((s, t) => s + (parseFloat(t.debit)  || 0), 0);
-        const rowCredits = (data.transactions || []).reduce((s, t) => s + (parseFloat(t.credit) || 0), 0);
-
-        const reconciliationResult = await runAIReconciliation(base64PDF, file.name, rowDebits, rowCredits);
-
-        console.log('Success:', file.name, '| Transactions:', transactions.length);
-
-        return {
-          success: true,
-          transactions,
-          summary: {
-            file: file.name, bank: data.bank_name || '', account_holder: data.account_holder || '',
-            account_number: data.account_number || '', period: data.statement_period || '',
-            opening_balance: data.opening_balance || 0, closing_balance: data.closing_balance || 0,
-            transaction_count: transactions.length,
-          },
-          statementObj: {
-            fileName: file.name, openingBalance: data.opening_balance || 0, closingBalance: data.closing_balance || 0,
-            totalDebits: +rowDebits.toFixed(2), totalCredits: +rowCredits.toFixed(2),
-            transactions: data.transactions || [],
-          },
-          reconciliationResult,
-          outputFileName: `${file.name.replace(/\.pdf$/i, '')}.xlsx`,
-        };
-      } catch (err) {
-        console.log('Failed:', file.name, '|', err.message);
-        return { success: false, error: { file: file.name, error: err.message } };
-      }
-    }));
+    // ── Process all PDFs (same pipeline as before) ───────────
+    const results = await Promise.all(
+      pdfFiles.map(file =>
+        processSinglePdf(file).catch(err => {
+          console.log('Failed:', file.name, '|', err.message);
+          return { success: false, error: { file: file.name, error: err.message } };
+        })
+      )
+    );
 
     const allTransactions = [], allStatements = [], summaries = [], reconciliation = [], errors = [];
     let outputFileName = 'bank_extraction.xlsx';
@@ -361,7 +416,10 @@ export async function POST(request) {
     });
 
     if (results.filter(r => r.success).length > 1) {
-      outputFileName = results.filter(r => r.success && r.outputFileName).map(r => r.outputFileName.replace('.xlsx','')).join('_') + '.xlsx';
+      outputFileName = results
+        .filter(r => r.success && r.outputFileName)
+        .map(r => r.outputFileName.replace('.xlsx', ''))
+        .join('_') + '.xlsx';
     }
 
     if (summaries.length === 0) {
@@ -458,7 +516,6 @@ export async function POST(request) {
       excelFile:         excelBase64,
       fileName:          outputFileName,
       reconciliation,
-      // reconciliation embedded in qcData so QCBadge gets it via toolOutput automatically
       qcData: buildBankQcData(allStatements, allTransactions, reconciliation),
     });
 
